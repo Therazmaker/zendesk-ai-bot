@@ -1,0 +1,18 @@
+{"manifest_version": 3,
+ "name": "Zendesk AI Chatbot Extension",
+ "version": "1.0",
+ "description": "A Chrome extension for Zendesk integration with AI capabilities.",
+ "permissions": ["storage", "activeTab"],
+ "background": {
+   "service_worker": "src/background.js"
+ },
+ "action": {
+   "default_popup": "src/popup.html"
+ },
+ "content_scripts": [{
+   "matches": ["*://*.zendesk.com/*"],
+   "js": ["src/content.js"]
+ }],
+ "icons": {
+   "48": "icons/icon.png"
+ }}
