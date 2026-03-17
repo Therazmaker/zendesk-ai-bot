@@ -243,6 +243,8 @@ class LivingBrain {
       { key: 'ruptura', label: 'Ruptura', type: 'rule', signal: 'WAIT', regex: /ruptura|breakout/i }
     ];
     this.variantFamilies = new Map();
+    this.superNeuronThreshold = 60;
+    this.superNeuronMinDaughters = 3;
   }
 
   extractFeatures(c) {
@@ -307,6 +309,7 @@ class LivingBrain {
     if (!mother || mother.variantFamilyActive) return [];
     const filters = ['EMA', 'RSI', 'Estocástico'];
     const daughters = filters.map((filterType) => {
+      const variantIndex = filters.indexOf(filterType) + 1;
       const daughter = this.birthNeuron({
         name: `${mother.name} (Hija ${filterType})`,
         features: this.addConfluenceFilterToTriggers(mother.triggers, filterType),
@@ -321,6 +324,7 @@ class LivingBrain {
         motherId: mother.id,
         motherName: mother.name,
         extraFilter: filterType,
+        variantLabel: `V${variantIndex}`,
         role: 'daughter',
         familyId: `${mother.id}-${Date.now()}`
       };
@@ -341,6 +345,81 @@ class LivingBrain {
       addLog(`✨ Momento de oro detectado en ${mother.name}. Nacen variantes EMA/RSI/Estocástico para competir.`);
     }
     return daughters;
+  }
+
+  mergeRangeFilter(baseRange, incomingRange) {
+    if (!baseRange) return { ...incomingRange };
+    if (!incomingRange) return { ...baseRange };
+    return {
+      min: Math.max(baseRange.min ?? 0, incomingRange.min ?? 0),
+      max: Math.min(baseRange.max ?? 100, incomingRange.max ?? 100)
+    };
+  }
+
+  composeSuperNeuronTriggers(mother, daughters = []) {
+    const merged = { ...(mother?.triggers || {}) };
+    daughters.forEach((daughter) => {
+      const t = daughter?.triggers || {};
+      if (t.emaBias) merged.emaBias = t.emaBias;
+      if (t.rsiRange) merged.rsiRange = this.mergeRangeFilter(merged.rsiRange, t.rsiRange);
+      if (t.stochasticRange) merged.stochasticRange = this.mergeRangeFilter(merged.stochasticRange, t.stochasticRange);
+      if (t.wickLower) merged.wickLower = { ...t.wickLower };
+      if (t.bodyRatio) merged.bodyRatio = { ...t.bodyRatio };
+      if (t.trend) merged.trend = t.trend;
+    });
+    return merged;
+  }
+
+  archiveLineage(mother, daughters = []) {
+    const lineageIds = [mother?.id, ...daughters.map((d) => d.id)].filter(Boolean);
+    lineageIds.forEach((id) => {
+      if (this.neurons.delete(id)) this.totalNeuronsDied += 1;
+    });
+    for (const neuron of this.neurons.values()) {
+      neuron.connections = neuron.connections.filter((conn) => !lineageIds.includes(this.normalizeConnection(conn).to));
+    }
+  }
+
+  distillKnowledge() {
+    this.variantFamilies.forEach((family) => {
+      if (family.resolved) return;
+      const mother = this.neurons.get(family.motherId);
+      if (!mother) return;
+      const daughters = family.daughterIds.map((id) => this.neurons.get(id)).filter(Boolean);
+      if (!daughters.length) return;
+
+      const successfulDaughters = daughters.filter((daughter) => this.getNeuronWinRate(daughter) > this.superNeuronThreshold);
+
+      if (successfulDaughters.length >= this.superNeuronMinDaughters) {
+        const variantTags = successfulDaughters
+          .map((daughter) => daughter?.lineage?.variantLabel)
+          .filter(Boolean);
+        const superNeuron = this.birthNeuron({
+          name: `Súper Neurona: ${mother.name} [${variantTags.join(', ')}]`,
+          features: this.composeSuperNeuronTriggers(mother, successfulDaughters),
+          signal: mother.signal,
+          description: `Destilación de linaje de ${mother.name} con confluencia de ${variantTags.join(', ')}`,
+          generation: Math.max((mother.generation || 1) + 1, ...successfulDaughters.map((d) => d.generation || 1)),
+          weight: 0.9,
+          isProtected: true
+        });
+        superNeuron.type = 'super';
+        superNeuron.isSuperNeuron = true;
+        superNeuron.lineage = {
+          role: 'super',
+          motherId: mother.id,
+          daughterIds: successfulDaughters.map((d) => d.id),
+          familyId: family.motherId,
+          variantTags
+        };
+        this.archiveLineage(mother, daughters);
+        if (typeof addLog === 'function') {
+          addLog(`🌟 Destilación completada: ${superNeuron.name} creada con peso inicial 0.9. Linaje original archivado.`);
+        }
+      }
+
+      family.resolved = true;
+    });
   }
 
   evaluateGoldenMoment(neuron) {
@@ -556,33 +635,7 @@ class LivingBrain {
 
     this.backtestCycles += 1;
 
-    this.variantFamilies.forEach((family) => {
-      if (family.resolved) return;
-      const mother = this.neurons.get(family.motherId);
-      if (!mother) return;
-      const daughters = family.daughterIds
-        .map((id) => this.neurons.get(id))
-        .filter(Boolean);
-      if (!daughters.length) return;
-
-      const motherWinRate = this.getNeuronWinRate(mother);
-      const bestDaughter = daughters.reduce((best, current) => (
-        this.getNeuronWinRate(current) > this.getNeuronWinRate(best) ? current : best
-      ), daughters[0]);
-      const bestDaughterWinRate = this.getNeuronWinRate(bestDaughter);
-
-      if (bestDaughterWinRate > motherWinRate) {
-        this.neurons.delete(mother.id);
-        this.totalNeuronsDied += 1;
-        bestDaughter.lineage = { ...(bestDaughter.lineage || {}), promotedAsMaster: true };
-        bestDaughter.generation = mother.generation;
-        if (typeof addLog === 'function') {
-          addLog(`👑 Selección natural: ${bestDaughter.name} reemplaza a ${mother.name} (${bestDaughterWinRate.toFixed(1)}% vs ${motherWinRate.toFixed(1)}%).`);
-        }
-      }
-
-      family.resolved = true;
-    });
+    this.distillKnowledge();
 
     for (const neuron of this.neurons.values()) {
       if (neuron.autoDiscovered && neuron.weight > 0.6) {
@@ -1040,7 +1093,11 @@ const ctx = canvas.getContext('2d');
 const tooltip = document.getElementById('tooltip');
 let hoveredNode = null;
 
-function colorForGen(g) { return g === 1 ? '#1DB584' : g === 2 ? '#7B6FE8' : '#E8A020'; }
+function colorForNeuron(node) {
+  if (node?.isSuperNeuron || node?.type === 'super') return '#FFD84D';
+  const g = node?.generation || 1;
+  return g === 1 ? '#1DB584' : g === 2 ? '#7B6FE8' : '#E8A020';
+}
 function alpha(hex, a) { const h = hex.replace('#', ''); const n = parseInt(h, 16); return `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, ${a})`; }
 
 function syncNodes() {
@@ -1057,7 +1114,7 @@ addEventListener('neuron:born', (e) => {
   const n = nodesSim.get(e.detail.id);
   n.x = canvas.width / 2; n.y = canvas.height / 2; n.vx = (Math.random() - 0.5) * 4; n.vy = (Math.random() - 0.5) * 4;
   birthAnimations.push({ id: e.detail.id, start: performance.now() });
-  for (let i = 0; i < 8; i++) particles.push({ x: n.x, y: n.y, vx: (Math.random() - 0.5) * 4, vy: (Math.random() - 0.5) * 4, life: 1, color: colorForGen(e.detail.generation) });
+  for (let i = 0; i < 8; i++) particles.push({ x: n.x, y: n.y, vx: (Math.random() - 0.5) * 4, vy: (Math.random() - 0.5) * 4, life: 1, color: colorForNeuron(e.detail) });
   saveState();
   renderNeuronsList();
   renderStats();
@@ -1122,7 +1179,7 @@ function drawGraph(now) {
   data.nodes.forEach((node) => {
     const sim = nodesSim.get(node.id); if (!sim) return;
     let radius = 8 + (node.weight * 6);
-    const color = colorForGen(node.generation);
+    const color = colorForNeuron(node);
     const b = birthAnimations.find(x => x.id === node.id);
     if (b) {
       const t = (now - b.start) / 500;
@@ -1194,7 +1251,7 @@ function renderNeuronsList() {
   const host = document.getElementById('neuronsList');
   const items = Array.from(brain.neurons.values());
   if (!items.length) { host.innerHTML = '<div class="text-sm">El cerebro nace vacío. Aún no hay neuronas.</div>'; return; }
-  host.innerHTML = items.map(n => `<div class="neuron-item"><span class="neuron-orb" style="color:${colorForGen(n.generation)};background:${colorForGen(n.generation)}"></span><div style="flex:1"><div class="text-base">${n.name}</div><div class="text-sm">${n.type} · act:${n.activations} · señal:${n.signal || 'null'}</div><div class="weight-bar"><div class="weight-fill" style="width:${Math.round(n.weight*100)}%"></div></div></div></div>`).join('');
+  host.innerHTML = items.map(n => `<div class="neuron-item"><span class="neuron-orb" style="color:${colorForNeuron(n)};background:${colorForNeuron(n)}"></span><div style="flex:1"><div class="text-base">${n.name}</div><div class="text-sm">${n.type} · act:${n.activations} · señal:${n.signal || 'null'}</div><div class="weight-bar"><div class="weight-fill" style="width:${Math.round(n.weight*100)}%"></div></div></div></div>`).join('');
 }
 
 let typingToken = 0;
