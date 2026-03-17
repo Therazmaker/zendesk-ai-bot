@@ -245,6 +245,37 @@ class LivingBrain {
     this.variantFamilies = new Map();
     this.superNeuronThreshold = 60;
     this.superNeuronMinDaughters = 3;
+    this.criticalPopulationNotified = false;
+  }
+
+  promoteMasterNeuron(neuron) {
+    if (!neuron || neuron.isMaster) return;
+    if (neuron.weight > 0.7 && neuron.activations > 25) {
+      neuron.isMaster = true;
+      if (typeof addLog === 'function') addLog(`👑 Neurona maestra protegida: ${neuron.name}`);
+    }
+  }
+
+  clampNeuronWeight(neuron, nextWeight) {
+    const minWeight = neuron?.isMaster ? 0.3 : 0;
+    return Math.min(1, Math.max(minWeight, nextWeight));
+  }
+
+  getOutcomeDelta(neuron, outcome) {
+    if (outcome === 'WIN') return neuron?.isMaster ? 0.25 : 0.15;
+    return neuron?.isMaster ? -0.20 : (neuron?.isProtected ? -0.05 : -0.20);
+  }
+
+  shouldSuspendPruning() {
+    const isCriticalPopulation = this.neurons.size < 5;
+    if (isCriticalPopulation && !this.criticalPopulationNotified) {
+      if (typeof addLog === 'function') {
+        addLog('⚠️ Alerta: Población neuronal crítica. Poda suspendida para preservar el aprendizaje.');
+      }
+      this.criticalPopulationNotified = true;
+    }
+    if (!isCriticalPopulation) this.criticalPopulationNotified = false;
+    return isCriticalPopulation;
   }
 
   extractFeatures(c) {
@@ -533,15 +564,17 @@ class LivingBrain {
   }
 
   applyEntropy() {
+    if (this.shouldSuspendPruning()) return;
     const entropyDecay = 0.005;
     const DEATH_THRESHOLD = 0.25;
     for (const [id, neuron] of this.neurons.entries()) {
       const dynamicLearningRate = neuron.activations > 50 && neuron.weight < 0.4 ? 2 : 1;
-      neuron.weight = Math.max(0, neuron.weight - (entropyDecay * dynamicLearningRate));
+      neuron.weight = this.clampNeuronWeight(neuron, neuron.weight - (entropyDecay * dynamicLearningRate));
       neuron.confidence = neuron.weight;
+      this.promoteMasterNeuron(neuron);
       const activationThreshold = neuron.activationsThreshold ?? 15;
       const canBePruned = neuron.activations >= activationThreshold;
-      if (neuron.generation > 1 && neuron.weight < DEATH_THRESHOLD && !neuron.isProtected && !neuron.isTesting && canBePruned) {
+      if (neuron.generation > 1 && neuron.weight < DEATH_THRESHOLD && !neuron.isProtected && !neuron.isTesting && !neuron.isMaster && canBePruned) {
         this.neurons.delete(id);
         this.totalNeuronsDied += 1;
       }
@@ -552,6 +585,7 @@ class LivingBrain {
   }
 
   pruneNoise() {
+    if (this.shouldSuspendPruning()) return 0;
     const now = Date.now();
     const fiveMinutesMs = 5 * 60 * 1000;
     const ruleNeurons = Array.from(this.neurons.values()).filter((neuron) => neuron.type === 'rule');
@@ -571,7 +605,7 @@ class LivingBrain {
       const protectedNewGen1 = neuron.generation === 1 && (now - (neuron.born || 0)) < fiveMinutesMs;
       const lowWeight = neuron.weight < 0.2 && !protectedNewGen1 && canBePruned;
       const isVideoConceptLoser = neuron.name.includes('Concepto video') && avgRulePerformance !== null && winRate < avgRulePerformance;
-      if (neuron.isProtected || neuron.isTesting || !canBePruned) continue;
+      if (neuron.isProtected || neuron.isTesting || neuron.isMaster || !canBePruned) continue;
       if (lowWinRate || lowWeight || isVideoConceptLoser) removableIds.push(id);
     }
 
@@ -581,8 +615,9 @@ class LivingBrain {
 
     for (const neuron of this.neurons.values()) {
       neuron.connections = neuron.connections.filter((conn) => this.neurons.has(this.normalizeConnection(conn).to));
-      neuron.weight = Math.min(1, neuron.weight + 0.05);
+      neuron.weight = this.clampNeuronWeight(neuron, neuron.weight + 0.05);
       neuron.confidence = neuron.weight;
+      this.promoteMasterNeuron(neuron);
     }
 
     return removableIds.length;
@@ -609,6 +644,7 @@ class LivingBrain {
         const score = this.matchScore(neuron.triggers, features);
         if (score > 0.6) {
           neuron.activations += 1;
+          this.promoteMasterNeuron(neuron);
           activated.push({ neuron, score });
         }
       }
@@ -664,7 +700,7 @@ class LivingBrain {
       const winRate = this.getNeuronWinRate(neuron);
       const failedWinRate = winRate < 55;
       const failedWeight = neuron.weight < 0.3;
-      if (failedWinRate || failedWeight) removable.push(neuron.id);
+      if ((failedWinRate || failedWeight) && !neuron.isMaster) removable.push(neuron.id);
     });
 
     Array.from(this.neurons.values()).forEach((neuron) => {
@@ -842,15 +878,14 @@ class LivingBrain {
 
   applyNeuronOutcome(neuron, outcome) {
     if (!neuron) return;
-    const delta = outcome === 'WIN'
-      ? 0.15
-      : (neuron.isProtected ? -0.05 : -0.20);
-    neuron.weight = Math.min(1, Math.max(0, neuron.weight + delta));
+    const delta = this.getOutcomeDelta(neuron, outcome);
+    neuron.weight = this.clampNeuronWeight(neuron, neuron.weight + delta);
     neuron.correctPredictions += outcome === 'WIN' ? 1 : 0;
     neuron.confidence = neuron.weight;
     neuron.recentOutcomes = neuron.recentOutcomes || [];
     neuron.recentOutcomes.push(outcome);
     if (neuron.recentOutcomes.length > 10) neuron.recentOutcomes = neuron.recentOutcomes.slice(-10);
+    this.promoteMasterNeuron(neuron);
     this.evaluateGoldenMoment(neuron);
     this.autopruning(neuron);
   }
@@ -858,7 +893,8 @@ class LivingBrain {
   autopruning(neuron) {
     const activationThreshold = neuron?.activationsThreshold ?? 15;
     const canBePruned = (neuron?.activations ?? 0) >= activationThreshold;
-    if (!neuron || neuron.type !== 'pattern' || neuron.isProtected || neuron.isTesting || neuron.weight >= 0.1 || !canBePruned) return false;
+    if (!neuron || neuron.type !== 'pattern' || neuron.isProtected || neuron.isTesting || neuron.isMaster || neuron.weight >= 0.1 || !canBePruned) return false;
+    if (this.shouldSuspendPruning()) return false;
     if (!this.neurons.delete(neuron.id)) return false;
     this.totalNeuronsDied += 1;
     if (typeof addLog === 'function') addLog('Neurona fallida eliminada por selección natural');
@@ -989,6 +1025,7 @@ class LivingBrain {
       const score = this.matchScore(neuron.triggers, features);
       if (score > 0.6) {
         neuron.activations += 1;
+        this.promoteMasterNeuron(neuron);
         activated.push({ neuron, score });
         (this.contextHistory.get(neuron.id) || this.contextHistory.set(neuron.id, []).get(neuron.id)).push(features.trend);
         neuron.connections.forEach((rawConn) => {
@@ -1007,9 +1044,13 @@ class LivingBrain {
 
   receiveOutcome(outcome) {
     this.lastActivated.forEach(({ neuron }) => {
-      neuron.weight = Math.min(1, Math.max(0, neuron.weight + (outcome === 'WIN' ? 0.03 : -0.03)));
+      const delta = outcome === 'WIN'
+        ? (neuron.isMaster ? 0.25 : 0.03)
+        : -0.03;
+      neuron.weight = this.clampNeuronWeight(neuron, neuron.weight + delta);
       neuron.correctPredictions += outcome === 'WIN' ? 1 : 0;
       neuron.confidence = neuron.weight;
+      this.promoteMasterNeuron(neuron);
     });
   }
 
@@ -1065,6 +1106,7 @@ class LivingBrain {
     this.totalNeuronsDied = state.totalNeuronsDied || 0;
     this.autoPatternCounter = state.autoPatternCounter || 0;
     this.neurons = new Map((state.neurons || []).map(n => [n.id, { successfulActivations: 0, activationsThreshold: 15, isTesting: false, ...n }]));
+    for (const neuron of this.neurons.values()) this.promoteMasterNeuron(neuron);
     if (!this.totalNeuronsBorn) this.totalNeuronsBorn = this.neurons.size;
 
   }
@@ -1094,6 +1136,7 @@ const tooltip = document.getElementById('tooltip');
 let hoveredNode = null;
 
 function colorForNeuron(node) {
+  if (node?.isMaster) return '#22F0FF';
   if (node?.isSuperNeuron || node?.type === 'super') return '#FFD84D';
   const g = node?.generation || 1;
   return g === 1 ? '#1DB584' : g === 2 ? '#7B6FE8' : '#E8A020';
