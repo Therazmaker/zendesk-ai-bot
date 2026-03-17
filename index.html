@@ -76,6 +76,8 @@
     .btn-primary:active { transform: scale(0.97); }
     .btn-ghost { background: transparent; color: var(--text-secondary); font-size: 13px; padding: 9px 20px; border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; }
     .btn-ghost:hover { border-color: var(--border-medium); color: var(--text-primary); background: var(--bg-lift); }
+    .btn-warning { background: rgba(255, 71, 87, 0.15); color: #ff9ca5; border-color: rgba(255, 71, 87, 0.35); }
+    .btn-warning:hover { background: rgba(255, 71, 87, 0.25); color: #ffd6da; border-color: rgba(255, 71, 87, 0.55); }
 
     .health-grid { display:grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap:8px; margin-top:10px; }
     .health-card { padding:10px; border:1px solid var(--border-faint); border-radius:8px; background: var(--bg-surface); }
@@ -121,6 +123,7 @@
         <div class="stat"><div class="text-label">Velas vistas</div><div class="text-stat" id="statObs">0</div></div>
         <div class="stat"><div class="text-label">Salud cerebro</div><div class="text-stat" id="statHealth">0%</div></div>
         <button class="btn-ghost" id="btnSurvivalReport">Ver Reporte Detallado</button>
+        <button class="btn-ghost btn-warning" id="btnPruneNoise">🧹 Purgar Ruido</button>
       </div>
     </header>
 
@@ -371,6 +374,40 @@ class LivingBrain {
     for (const neuron of this.neurons.values()) {
       neuron.connections = neuron.connections.filter((conn) => this.neurons.has(this.normalizeConnection(conn).to));
     }
+  }
+
+  pruneNoise() {
+    const now = Date.now();
+    const fiveMinutesMs = 5 * 60 * 1000;
+    const ruleNeurons = Array.from(this.neurons.values()).filter((neuron) => neuron.type === 'rule');
+    const avgRulePerformance = ruleNeurons.length
+      ? ruleNeurons.reduce((acc, neuron) => {
+          const wr = neuron.activations > 0 ? (neuron.correctPredictions / neuron.activations) * 100 : 0;
+          return acc + wr;
+        }, 0) / ruleNeurons.length
+      : null;
+
+    const removableIds = [];
+    for (const [id, neuron] of this.neurons.entries()) {
+      const winRate = neuron.activations > 0 ? (neuron.correctPredictions / neuron.activations) * 100 : 0;
+      const lowWinRate = neuron.activations > 50 && winRate < 35;
+      const protectedNewGen1 = neuron.generation === 1 && (now - (neuron.born || 0)) < fiveMinutesMs;
+      const lowWeight = neuron.weight < 0.2 && !protectedNewGen1;
+      const isVideoConceptLoser = neuron.name.includes('Concepto video') && avgRulePerformance !== null && winRate < avgRulePerformance;
+      if (lowWinRate || lowWeight || isVideoConceptLoser) removableIds.push(id);
+    }
+
+    removableIds.forEach((id) => {
+      if (this.neurons.delete(id)) this.totalNeuronsDied += 1;
+    });
+
+    for (const neuron of this.neurons.values()) {
+      neuron.connections = neuron.connections.filter((conn) => this.neurons.has(this.normalizeConnection(conn).to));
+      neuron.weight = Math.min(1, neuron.weight + 0.05);
+      neuron.confidence = neuron.weight;
+    }
+
+    return removableIds.length;
   }
 
   async runBacktest(data = []) {
@@ -1030,6 +1067,15 @@ document.getElementById('btnEvolve').onclick = () => { const d = brain.evolveNeu
 document.getElementById('btnSurvivalReport').onclick = () => {
   const report = brain.generateSurvivalReport();
   addLogEntries(report.lines);
+};
+
+document.getElementById('btnPruneNoise').onclick = () => {
+  const removed = brain.pruneNoise();
+  addLog(`Poda completada: Se eliminaron ${removed} neuronas de bajo rendimiento. Salud del sistema optimizada.`);
+  syncNodes();
+  renderNeuronsList();
+  renderStats();
+  saveState();
 };
 
 
