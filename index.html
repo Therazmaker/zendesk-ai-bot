@@ -1221,13 +1221,14 @@ function drawGraph(now) {
 
   data.nodes.forEach((node) => {
     const sim = nodesSim.get(node.id); if (!sim) return;
-    let radius = 8 + (node.weight * 6);
+    const baseRadius = Math.max(0.5, 8 + (node.weight * 6));
+    let radius = baseRadius;
     const color = colorForNeuron(node);
     const b = birthAnimations.find(x => x.id === node.id);
     if (b) {
       const t = (now - b.start) / 500;
       if (t >= 1) birthAnimations.splice(birthAnimations.indexOf(b), 1);
-      else radius = t < 0.4 ? 30 * (t / 0.4) : (8 + node.weight * 6) + Math.sin(t * 20) * 2;
+      else radius = t < 0.4 ? 30 * (t / 0.4) : baseRadius + Math.sin(t * 20) * 2;
     }
     const active = brain.lastActivated.find(x => x.neuron.id === node.id);
     if (active) {
@@ -1235,6 +1236,7 @@ function drawGraph(now) {
       radius += pulse * 8;
     }
     const weightAlpha = Math.max(0, Math.min(1, node.weight));
+    radius = Math.max(0.5, Number.isFinite(radius) ? radius : baseRadius);
     ctx.globalAlpha = active ? 1 : weightAlpha;
     ctx.shadowBlur = active ? 40 : 12;
     ctx.shadowColor = alpha(color, active ? 0.8 : 0.4);
