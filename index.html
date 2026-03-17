@@ -77,6 +77,9 @@
     .btn-ghost { background: transparent; color: var(--text-secondary); font-size: 13px; padding: 9px 20px; border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; }
     .btn-ghost:hover { border-color: var(--border-medium); color: var(--text-primary); background: var(--bg-lift); }
 
+    .health-grid { display:grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap:8px; margin-top:10px; }
+    .health-card { padding:10px; border:1px solid var(--border-faint); border-radius:8px; background: var(--bg-surface); }
+
     .narrative-panel { background: var(--bg-deep); border: 1px solid var(--border-faint); border-radius: 12px; padding: 20px 24px; min-height: 180px; position: relative; overflow: hidden; }
     .narrative-panel::before { content:''; position:absolute; inset:0; background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.08) 2px,rgba(0,0,0,0.08) 4px); pointer-events:none; }
     .narrative-history { opacity: .3; font-size: 11px; color: var(--text-secondary); margin-bottom: 12px; border-bottom: 1px solid var(--border-faint); padding-bottom: 10px; }
@@ -151,10 +154,17 @@
         </form>
         <div style="margin-top:8px;"><button class="btn-primary" id="btnCandle">Aprender de vela</button></div>
 
-        <div class="text-label" style="margin-top:14px;">Backtesting desde archivo CSV/JSON</div>
+        <div class="text-label" style="margin-top:14px;">Carga de Datos</div>
         <div style="display:flex; gap:8px; align-items:center;">
           <input type="file" id="dataFile" accept=".csv,.json" class="tx-area" style="min-height:42px; padding:8px 10px;" />
-          <button class="btn-primary" id="btnBacktest">Cargar y backtest</button>
+          <button class="btn-primary" id="btnBacktest">Subir CSV y ejecutar</button>
+        </div>
+
+        <div class="text-label" style="margin-top:14px;">Monitor de Salud</div>
+        <div class="health-grid">
+          <div class="health-card"><div class="text-label">Neuronas Vivas</div><div class="text-base" id="healthAlive">0</div></div>
+          <div class="health-card"><div class="text-label">Peso Promedio</div><div class="text-base" id="healthAvgWeight">0.00</div></div>
+          <div class="health-card"><div class="text-label">Tasa Supervivencia</div><div class="text-base" id="healthSurvival">0%</div></div>
         </div>
       </section>
 
@@ -210,6 +220,9 @@ class LivingBrain {
     this.contextHistory = new Map();
     this.backtestCycles = 0;
     this.minActivationsForEvolution = 5;
+    this.totalNeuronsBorn = 0;
+    this.totalNeuronsDied = 0;
+    this.backtestDelayMs = 80;
     this.transcriptConceptMap = [
       { key: 'compradores atrapados', label: 'Compradores Atrapados', type: 'pattern', signal: 'SELL', regex: /compradores? atrapados?|buyers? trapped/i },
       { key: 'rendicion', label: 'Rendición', type: 'concept', signal: 'SELL', regex: /rendici[oó]n|capitulaci[oó]n/i },
@@ -238,7 +251,8 @@ class LivingBrain {
 
   makeNeuron({ name, type, triggers, weight, description, signal, generation = 1 }) {
     const id = `n_${String(this.neurons.size + 1).padStart(3, '0')}`;
-    return { id, born: Date.now(), name, type, triggers, weight, activations: 0, correctPredictions: 0, connections: [], description, signal, confidence: weight, generation, activationLimit: 6 };
+    this.totalNeuronsBorn += 1;
+    return { id, born: Date.now(), name, type, triggers, weight, activations: 0, correctPredictions: 0, successfulActivations: 0, connections: [], description, signal, confidence: weight, generation, activationLimit: 6 };
   }
 
   normalizeConnection(conn) {
@@ -313,71 +327,88 @@ class LivingBrain {
     return Number(cleaned);
   }
 
+  parseTradeData(csvText) {
+    const lines = (csvText || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (!lines.length) return [];
+    const delimiter = lines[0].includes(';') ? ';' : ',';
+    const headers = lines[0].split(delimiter).map((h) => h.trim().toLowerCase());
+    return lines.slice(1).map((line) => {
+      const cols = line.split(delimiter).map((c) => c.trim());
+      const row = Object.fromEntries(headers.map((h, idx) => [h, cols[idx] || '']));
+      const parseNumeric = (value) => Number(String(value || '').replace(',', '.'));
+      return {
+        timestamp: row.timestamp || row.time || row.date || '',
+        open: parseNumeric(row.open),
+        high: parseNumeric(row.high),
+        low: parseNumeric(row.low),
+        close: parseNumeric(row.close)
+      };
+    }).filter((candle) => [candle.open, candle.high, candle.low, candle.close].every(Number.isFinite));
+  }
+
   applyEntropy() {
-    const entropyRate = 0.005;
+    const entropyDecay = 0.005;
     for (const [id, neuron] of this.neurons.entries()) {
-      neuron.weight = Math.max(0, neuron.weight * (1 - entropyRate));
+      neuron.weight = Math.max(0, neuron.weight - entropyDecay);
       neuron.confidence = neuron.weight;
-      if (neuron.weight < 0.1 && neuron.generation > 1) this.neurons.delete(id);
+      if (neuron.generation > 1 && neuron.weight < 0.1) {
+        this.neurons.delete(id);
+        this.totalNeuronsDied += 1;
+      }
     }
     for (const neuron of this.neurons.values()) {
       neuron.connections = neuron.connections.filter((conn) => this.neurons.has(this.normalizeConnection(conn).to));
     }
   }
 
-  runBacktest(candles = []) {
-    const safeCandles = Array.isArray(candles) ? candles : [];
+  async runBacktest(data = []) {
+    const candles = Array.isArray(data) ? data : [];
     let wins = 0;
     let losses = 0;
 
-    for (let i = 0; i < safeCandles.length - 1; i++) {
-      const current = safeCandles[i];
-      const next = safeCandles[i + 1];
-      if (!current || !next) continue;
+    for (let i = 0; i < candles.length - 1; i++) {
+      const candle = candles[i];
+      const nextCandle = candles[i + 1];
+      if (!candle || !nextCandle) continue;
 
-      const nature = this.calculateCandleNature(current);
-      const nextDirection = this.calculateCandleNature(next).direction;
+      this.observations += 1;
+      const features = this.extractFeatures(candle);
       const activated = [];
-
       for (const neuron of this.neurons.values()) {
-        const semanticName = `${neuron.name} ${neuron.description || ''}`.toLowerCase();
-        const matchesDeceleration = /desaceleraci[oó]n|doji|indecisi[oó]n/.test(semanticName);
-        const matchesAcceleration = /aceleraci[oó]n|fuerza|impulso/.test(semanticName);
-
-        if ((nature.isDoji && matchesDeceleration) || (nature.isLargeBody && matchesAcceleration)) {
+        const score = this.matchScore(neuron.triggers, features);
+        if (score > 0.6) {
           neuron.activations += 1;
-          activated.push(neuron);
+          activated.push({ neuron, score });
         }
       }
 
-      activated.forEach((neuron) => {
-        const expectedDirection = neuron.signal === 'BUY' ? 'bullish' : neuron.signal === 'SELL' ? 'bearish' : 'neutral';
-        const hit = expectedDirection === nextDirection;
-        neuron.weight = Math.min(1, Math.max(0, neuron.weight + (hit ? 0.05 : -0.1)));
+      const nextDirection = nextCandle.close > nextCandle.open ? 'bullish' : nextCandle.close < nextCandle.open ? 'bearish' : 'neutral';
+      activated.forEach(({ neuron }) => {
+        const predictedDirection = neuron.signal === 'BUY' ? 'bullish' : neuron.signal === 'SELL' ? 'bearish' : 'neutral';
+        const success = predictedDirection === nextDirection;
+        neuron.weight = Math.min(1, Math.max(0, neuron.weight + (success ? 0.1 : -0.15)));
         neuron.confidence = neuron.weight;
-        if (hit) {
+        if (success) {
           neuron.correctPredictions += 1;
+          neuron.successfulActivations += 1;
           wins += 1;
         } else {
           losses += 1;
         }
       });
 
-      if ((i + 1) % 10 === 0) this.applyEntropy();
-      this.observations += 1;
+      this.lastActivated = activated;
+      if (this.observations % 10 === 0) this.applyEntropy();
+      dispatchEvent(new CustomEvent('backtest:tick', { detail: { index: i + 1, total: candles.length - 1, wins, losses, active: activated.length } }));
+      await new Promise((resolve) => setTimeout(resolve, this.backtestDelayMs));
     }
 
     this.backtestCycles += 1;
-    return {
-      candlesProcessed: Math.max(0, safeCandles.length - 1),
-      wins,
-      losses,
-      activations: wins + losses
-    };
+    return { candlesProcessed: Math.max(0, candles.length - 1), wins, losses, activations: wins + losses };
   }
 
   parseMarketData(raw, fileType = 'json') {
-    const normalizedType = fileType.toLowerCase();
+    const normalizedType = String(fileType || '').toLowerCase();
     if (normalizedType.includes('json')) {
       const data = JSON.parse(raw);
       return (Array.isArray(data) ? data : []).map((row) => ({
@@ -386,30 +417,24 @@ class LivingBrain {
         high: this.parseNumberish(row.high),
         low: this.parseNumberish(row.low),
         close: this.parseNumberish(row.close)
-      }));
+      })).filter((candle) => [candle.open, candle.high, candle.low, candle.close].every(Number.isFinite));
     }
-
-    const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    if (!lines.length) return [];
-    const delimiter = lines[0].includes(';') ? ';' : ',';
-    const headers = lines[0].split(delimiter).map((h) => h.trim().toLowerCase());
-    return lines.slice(1).map((line) => {
-      const cols = line.split(delimiter).map((c) => c.trim());
-      const row = Object.fromEntries(headers.map((h, idx) => [h, cols[idx] || '']));
-      return {
-        timestamp: row.timestamp || row.time || row.date || '',
-        open: this.parseNumberish(row.open),
-        high: this.parseNumberish(row.high),
-        low: this.parseNumberish(row.low),
-        close: this.parseNumberish(row.close)
-      };
-    }).filter((candle) => [candle.open, candle.high, candle.low, candle.close].every(Number.isFinite));
+    return this.parseTradeData(raw);
   }
+
+
 
   getBrainHealthIndex() {
     if (!this.neurons.size) return 0;
     const total = Array.from(this.neurons.values()).reduce((acc, neuron) => acc + neuron.weight, 0);
     return total / this.neurons.size;
+  }
+
+  getHealthSnapshot() {
+    const alive = this.neurons.size;
+    const avgWeight = this.getBrainHealthIndex();
+    const survivalRate = this.totalNeuronsBorn ? Math.max(0, (alive / this.totalNeuronsBorn) * 100) : 0;
+    return { alive, avgWeight, survivalRate };
   }
 
   learnFromTranscript(text) {
@@ -541,32 +566,28 @@ class LivingBrain {
 
   evolveNeurons() {
     const daughters = [];
-    const specializationTags = ['en 1m', 'en 5m', 'en rompimiento', 'en retroceso'];
 
     for (const neuron of this.neurons.values()) {
-      const minimumActivations = neuron.activationLimit || this.minActivationsForEvolution;
-      if (neuron.weight <= 0.8 || neuron.activations < minimumActivations) continue;
+      if (neuron.weight <= 0.85 || neuron.correctPredictions <= 10) continue;
       if (neuron.generation >= 4) continue;
 
       const daughter = this.birthNeuron({
         features: { ...neuron.triggers },
         signal: neuron.signal,
-        description: `Especialización derivada de ${neuron.name}`,
+        description: `Especialización por mérito de ${neuron.name}`,
         generation: neuron.generation + 1
       });
 
-      const tag = specializationTags[(neuron.activations + neuron.generation) % specializationTags.length];
-      daughter.name = `${this.simplifyNeuronName(neuron.name)} ${tag}`;
-      daughter.activationLimit = minimumActivations + 2;
+      daughter.name = `Especialización ${this.simplifyNeuronName(neuron.name)}`;
+      daughter.activationLimit = (neuron.activationLimit || this.minActivationsForEvolution) + 2;
       daughter.type = 'meta';
-      daughter.weight = Math.max(0.45, Math.min(1, neuron.weight - 0.08));
+      daughter.weight = Math.max(0.5, Math.min(1, neuron.weight - 0.05));
       daughter.confidence = daughter.weight;
       daughter.inheritedFrom = neuron.id;
       this.connectNeurons(neuron.id, daughter.id, 0.72, { source: 'evolution' });
       daughters.push(daughter.id);
     }
 
-    this.applyEntropy();
     if (daughters.length) this.generation = Math.max(this.generation, ...daughters.map(id => this.neurons.get(id)?.generation || 1));
     return daughters;
   }
@@ -642,6 +663,8 @@ class LivingBrain {
       generation: this.generation,
       observations: this.observations,
       pendingPatterns: this.pendingPatterns,
+      totalNeuronsBorn: this.totalNeuronsBorn,
+      totalNeuronsDied: this.totalNeuronsDied,
       neurons: Array.from(this.neurons.values())
     };
   }
@@ -651,7 +674,11 @@ class LivingBrain {
     this.generation = state.generation || 1;
     this.observations = state.observations || 0;
     this.pendingPatterns = state.pendingPatterns || [];
-    this.neurons = new Map((state.neurons || []).map(n => [n.id, n]));
+    this.totalNeuronsBorn = state.totalNeuronsBorn || 0;
+    this.totalNeuronsDied = state.totalNeuronsDied || 0;
+    this.neurons = new Map((state.neurons || []).map(n => [n.id, { successfulActivations: 0, ...n }]));
+    if (!this.totalNeuronsBorn) this.totalNeuronsBorn = this.neurons.size;
+
   }
 
   getGraphData() {
@@ -772,7 +799,7 @@ function drawGraph(now) {
       const pulse = Math.sin((now % 400) / 400 * Math.PI);
       radius += pulse * 8;
     }
-    const weightAlpha = Math.max(0.2, Math.min(1, node.weight));
+    const weightAlpha = Math.max(0, Math.min(1, node.weight));
     ctx.globalAlpha = active ? 1 : weightAlpha;
     ctx.shadowBlur = active ? 40 : 12;
     ctx.shadowColor = alpha(color, active ? 0.8 : 0.4);
@@ -814,10 +841,14 @@ function addLog(text) {
 }
 
 function renderStats() {
+  const health = brain.getHealthSnapshot();
   document.getElementById('statNeurons').textContent = brain.neurons.size;
   document.getElementById('statGen').textContent = brain.generation;
   document.getElementById('statObs').textContent = brain.observations;
   document.getElementById('statHealth').textContent = `${Math.round(brain.getBrainHealthIndex() * 100)}%`;
+  document.getElementById('healthAlive').textContent = health.alive;
+  document.getElementById('healthAvgWeight').textContent = health.avgWeight.toFixed(3);
+  document.getElementById('healthSurvival').textContent = `${Math.round(health.survivalRate)}%`;
 }
 
 function renderNeuronsList() {
@@ -895,7 +926,7 @@ document.getElementById('btnBacktest').onclick = async () => {
   try {
     const raw = await file.text();
     const candles = brain.parseMarketData(raw, file.name.split('.').pop() || 'json');
-    const result = brain.runBacktest(candles);
+    const result = await brain.runBacktest(candles);
     addLog(`Backtest finalizado en ${result.candlesProcessed} velas. Activaciones:${result.activations} WIN:${result.wins} LOSS:${result.losses}.`);
     renderStats();
     renderNeuronsList();
@@ -916,6 +947,14 @@ document.getElementById('btnObserve').onclick = () => {
 document.getElementById('btnWin').onclick = () => { brain.receiveOutcome('WIN'); addLog('Feedback WIN recibido. Pesos reforzados.'); renderNeuronsList(); saveState(); };
 document.getElementById('btnLoss').onclick = () => { brain.receiveOutcome('LOSS'); addLog('Feedback LOSS recibido. Pesos reducidos.'); renderNeuronsList(); saveState(); };
 document.getElementById('btnEvolve').onclick = () => { const d = brain.evolveNeurons(); addLog(`Evolución ejecutada. Hijas creadas: ${d.length}.`); renderStats(); renderNeuronsList(); saveState(); };
+
+
+addEventListener('backtest:tick', (event) => {
+  const { index, total, wins, losses, active } = event.detail;
+  typeNarrative(`Backtest ${index}/${total}. Activadas: ${active}. WIN ${wins} · LOSS ${losses}.`);
+  renderStats();
+  renderNeuronsList();
+});
 
 document.getElementById('tabs').onclick = (e) => {
   const btn = e.target.closest('.tab');
