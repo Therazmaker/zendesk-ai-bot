@@ -233,6 +233,7 @@ class LivingBrain {
     this.totalNeuronsBorn = 0;
     this.totalNeuronsDied = 0;
     this.backtestDelayMs = 80;
+    this.performanceHistory = [];
     this.autoPatternCounter = 0;
     this.transcriptConceptMap = [
       { key: 'compradores atrapados', label: 'Compradores Atrapados', type: 'pattern', signal: 'SELL', regex: /compradores? atrapados?|buyers? trapped/i },
@@ -304,7 +305,7 @@ class LivingBrain {
       id = `n_${String(index).padStart(3, '0')}`;
     }
     this.totalNeuronsBorn += 1;
-    return { id, born: Date.now(), name, type, triggers, weight, activations: 0, activationsThreshold: 15, correctPredictions: 0, successfulActivations: 0, connections: [], description, signal, confidence: weight, generation, activationLimit: 6, isTesting: false };
+    return { id, born: Date.now(), name, type, triggers, weight, activations: 0, activationsThreshold: 15, correctPredictions: 0, successfulActivations: 0, connections: [], description, signal, confidence: weight, generation, activationLimit: 6, isTesting: false, isNew: true };
   }
 
   getNeuronWinRate(neuron) {
@@ -441,6 +442,7 @@ class LivingBrain {
         });
         superNeuron.type = 'super';
         superNeuron.isSuperNeuron = true;
+        superNeuron.isSuper = true;
         superNeuron.lineage = {
           role: 'super',
           motherId: mother.id,
@@ -669,6 +671,8 @@ class LivingBrain {
       });
 
       this.lastActivated = activated;
+      this.performanceHistory.push({ timestamp: Date.now(), index: i + 1, outcome: candleOutcome, wins, losses, active: activated.length });
+      if (this.performanceHistory.length > 1313) this.performanceHistory = this.performanceHistory.slice(-1313);
       if (this.observations % 10 === 0) this.applyEntropy();
       dispatchEvent(new CustomEvent('backtest:tick', { detail: { index: i + 1, total: candles.length - 1, wins, losses, active: activated.length } }));
       await new Promise((resolve) => setTimeout(resolve, this.backtestDelayMs));
@@ -693,6 +697,7 @@ class LivingBrain {
     }
 
     const report = this.generateSurvivalReport();
+    if (typeof saveState === 'function') await saveState('backtest');
     return { candlesProcessed: Math.max(0, candles.length - 1), wins, losses, activations: wins + losses, report };
   }
 
@@ -1098,7 +1103,8 @@ class LivingBrain {
       totalNeuronsBorn: this.totalNeuronsBorn,
       totalNeuronsDied: this.totalNeuronsDied,
       autoPatternCounter: this.autoPatternCounter,
-      neurons: Array.from(this.neurons.values())
+      neurons: Array.from(this.neurons.values()),
+      performanceHistory: this.performanceHistory.slice(-1313)
     };
   }
 
@@ -1110,6 +1116,7 @@ class LivingBrain {
     this.totalNeuronsBorn = state.totalNeuronsBorn || 0;
     this.totalNeuronsDied = state.totalNeuronsDied || 0;
     this.autoPatternCounter = state.autoPatternCounter || 0;
+    this.performanceHistory = (state.performanceHistory || []).slice(-1313);
     this.neurons = new Map((state.neurons || []).map(n => [n.id, { successfulActivations: 0, activationsThreshold: 15, isTesting: false, ...n }]));
     for (const neuron of this.neurons.values()) this.promoteMasterNeuron(neuron);
     if (!this.totalNeuronsBorn) this.totalNeuronsBorn = this.neurons.size;
@@ -1128,19 +1135,44 @@ class LivingBrain {
 }
 
 const brain = new LivingBrain();
-const storageKey = 'living-brain-state-v1';
-
-function loadSavedState() {
-  try {
-    const raw = localStorage.getItem(storageKey);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch (err) {
-    console.warn('No se pudo leer el estado guardado. Se restablecerá el almacenamiento.', err);
-    localStorage.removeItem(storageKey);
-    return null;
+const StorageManager = {
+  dbName: 'AstrobrainDB',
+  storeName: 'brainState',
+  key: 'living-brain-state-v2',
+  dbPromise: null,
+  open() {
+    if (this.dbPromise) return this.dbPromise;
+    this.dbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(this.storeName)) db.createObjectStore(this.storeName);
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    return this.dbPromise;
+  },
+  async saveState(state) {
+    const db = await this.open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(this.storeName, 'readwrite');
+      tx.objectStore(this.storeName).put(state, this.key);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  },
+  async loadState() {
+    const db = await this.open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(this.storeName, 'readonly');
+      const request = tx.objectStore(this.storeName).get(this.key);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
+    });
   }
-}
+};
 
 function pruneNeuronForStorage(neuron) {
   const {
@@ -1166,38 +1198,30 @@ function buildStorageSnapshot(maxNeurons = Infinity) {
   }
 
   base.pendingPatterns = (base.pendingPatterns || []).slice(-150);
+  base.performanceHistory = (base.performanceHistory || []).slice(-1313);
   base.neurons = (base.neurons || []).map(pruneNeuronForStorage);
   return base;
 }
 
-function persistStateWithFallback() {
-  const tiers = [Infinity, 600, 350, 200, 100];
-  for (const maxNeurons of tiers) {
-    try {
-      const payload = JSON.stringify(buildStorageSnapshot(maxNeurons));
-      localStorage.setItem(storageKey, payload);
-      return true;
-    } catch (err) {
-      if (err?.name !== 'QuotaExceededError') {
-        console.error('Error inesperado al guardar el estado', err);
-        return false;
-      }
-    }
-  }
-
+async function persistState() {
   try {
-    localStorage.removeItem(storageKey);
-    localStorage.setItem(storageKey, JSON.stringify(buildStorageSnapshot(60)));
-    addLog('⚠️ Estado comprimido por límite de almacenamiento local.');
+    await StorageManager.saveState(buildStorageSnapshot(Infinity));
     return true;
   } catch (err) {
-    console.error('No fue posible guardar ni en modo comprimido.', err);
-    addLog('❌ No fue posible persistir el estado en localStorage.');
+    console.error('No fue posible persistir el estado en IndexedDB.', err);
+    addLog('❌ No fue posible persistir el estado en IndexedDB.');
     return false;
   }
 }
 
-brain.importState(loadSavedState());
+async function loadState() {
+  try {
+    return await StorageManager.loadState();
+  } catch (err) {
+    console.warn('No se pudo leer el estado guardado desde IndexedDB.', err);
+    return null;
+  }
+}
 
 const nodesSim = new Map();
 const birthAnimations = [];
@@ -1209,8 +1233,9 @@ const tooltip = document.getElementById('tooltip');
 let hoveredNode = null;
 
 function colorForNeuron(node) {
-  if (node?.isMaster) return '#22F0FF';
-  if (node?.isSuperNeuron || node?.type === 'super') return '#FFD84D';
+  if (node?.isNew) return '#22F0FF';
+  if (node?.isMaster) return '#FFD84D';
+  if (node?.isSuper || node?.isSuperNeuron || node?.type === 'super') return '#B066FF';
   const g = node?.generation || 1;
   return g === 1 ? '#1DB584' : g === 2 ? '#7B6FE8' : '#E8A020';
 }
@@ -1340,7 +1365,12 @@ function resizeCanvas() {
 }
 window.addEventListener('resize', resizeCanvas);
 
-function saveState() { persistStateWithFallback(); }
+async function saveState(reason = 'manual') {
+  const persisted = await persistState();
+  if (persisted && (reason === 'backtest' || reason === 'prune')) {
+    addLog(`💾 Auto-guardado ejecutado tras ${reason === 'backtest' ? 'backtest' : 'poda'}.`);
+  }
+}
 
 function addLog(text) {
   const log = document.getElementById('log');
@@ -1463,7 +1493,6 @@ document.getElementById('btnBacktest').onclick = async () => {
     addLogEntries(result.report?.lines || []);
     renderStats();
     renderNeuronsList();
-    saveState();
   } catch (error) {
     const message = `Error procesando archivo: ${error.message}`;
     alert(message);
@@ -1493,7 +1522,7 @@ document.getElementById('btnPruneNoise').onclick = () => {
   syncNodes();
   renderNeuronsList();
   renderStats();
-  saveState();
+  saveState('prune');
 };
 
 const handleExportPro = async () => {
@@ -1557,12 +1586,17 @@ canvas.addEventListener('mousemove', (e) => {
   } else tooltip.style.opacity = 0;
 });
 
-resizeCanvas();
-syncNodes();
-renderStats();
-renderNeuronsList();
-addLog('Living Brain inicializado. Estado cargado desde localStorage.');
-requestAnimationFrame(frame);
+async function initializeApp() {
+  brain.importState(await loadState());
+  resizeCanvas();
+  syncNodes();
+  renderStats();
+  renderNeuronsList();
+  addLog('Living Brain inicializado. Estado cargado desde IndexedDB.');
+  requestAnimationFrame(frame);
+}
+
+initializeApp();
 </script>
 </body>
 </html>
