@@ -330,20 +330,29 @@ class LivingBrain {
   parseTradeData(csvText) {
     const lines = (csvText || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     if (!lines.length) return [];
-    const delimiter = lines[0].includes(';') ? ';' : ',';
-    const headers = lines[0].split(delimiter).map((h) => h.trim().toLowerCase());
+
+    const splitCsvLine = (line) => {
+      const delimiter = line.includes(';') ? ';' : ',';
+      return line.split(new RegExp(`${delimiter}(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)`)).map((part) => part.trim());
+    };
+
+    const cleanPrice = (val) => {
+      const cleaned = String(val || '').replace(/"/g, '').trim().replace(',', '.');
+      return parseFloat(cleaned);
+    };
+
     return lines.slice(1).map((line) => {
-      const cols = line.split(delimiter).map((c) => c.trim());
-      const row = Object.fromEntries(headers.map((h, idx) => [h, cols[idx] || '']));
-      const parseNumeric = (value) => Number(String(value || '').replace(',', '.'));
+      const v = splitCsvLine(line);
+      if (v.length < 5) return null;
       return {
-        timestamp: row.timestamp || row.time || row.date || '',
-        open: parseNumeric(row.open),
-        high: parseNumeric(row.high),
-        low: parseNumeric(row.low),
-        close: parseNumeric(row.close)
+        timestamp: String(v[0] || '').replace(/"/g, '').trim(),
+        open: cleanPrice(v[1]),
+        high: cleanPrice(v[2]),
+        low: cleanPrice(v[3]),
+        close: cleanPrice(v[4]),
+        rsi: 50
       };
-    }).filter((candle) => [candle.open, candle.high, candle.low, candle.close].every(Number.isFinite));
+    }).filter((candle) => candle && [candle.open, candle.high, candle.low, candle.close].every(Number.isFinite));
   }
 
   applyEntropy() {
@@ -921,18 +930,38 @@ document.getElementById('btnCandle').onclick = () => {
 
 document.getElementById('btnBacktest').onclick = async () => {
   const file = document.getElementById('dataFile').files[0];
-  if (!file) return addLog('Selecciona un archivo CSV o JSON antes de correr backtest.');
+  if (!file) {
+    const message = 'Selecciona un archivo CSV o JSON antes de correr backtest.';
+    alert(message);
+    return addLog(message);
+  }
 
   try {
     const raw = await file.text();
     const candles = brain.parseMarketData(raw, file.name.split('.').pop() || 'json');
+    if (!Array.isArray(candles) || !candles.length) {
+      const message = 'No se pudieron generar velas válidas desde el archivo. Revisa formato de columnas y precios.';
+      alert(message);
+      addLog(message);
+      return;
+    }
+
+    if (candles.length < 2) {
+      const message = 'Se necesitan al menos 2 velas válidas para ejecutar el backtest.';
+      alert(message);
+      addLog(message);
+      return;
+    }
+
     const result = await brain.runBacktest(candles);
     addLog(`Backtest finalizado en ${result.candlesProcessed} velas. Activaciones:${result.activations} WIN:${result.wins} LOSS:${result.losses}.`);
     renderStats();
     renderNeuronsList();
     saveState();
   } catch (error) {
-    addLog(`Error procesando archivo: ${error.message}`);
+    const message = `Error procesando archivo: ${error.message}`;
+    alert(message);
+    addLog(message);
   }
 };
 
