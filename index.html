@@ -357,10 +357,12 @@ class LivingBrain {
 
   applyEntropy() {
     const entropyDecay = 0.005;
+    const DEATH_THRESHOLD = 0.25;
     for (const [id, neuron] of this.neurons.entries()) {
-      neuron.weight = Math.max(0, neuron.weight - entropyDecay);
+      const dynamicLearningRate = neuron.activations > 50 && neuron.weight < 0.4 ? 2 : 1;
+      neuron.weight = Math.max(0, neuron.weight - (entropyDecay * dynamicLearningRate));
       neuron.confidence = neuron.weight;
-      if (neuron.generation > 1 && neuron.weight < 0.1) {
+      if (neuron.generation > 1 && neuron.weight < DEATH_THRESHOLD) {
         this.neurons.delete(id);
         this.totalNeuronsDied += 1;
       }
@@ -590,7 +592,7 @@ class LivingBrain {
       daughter.name = `Especialización ${this.simplifyNeuronName(neuron.name)}`;
       daughter.activationLimit = (neuron.activationLimit || this.minActivationsForEvolution) + 2;
       daughter.type = 'meta';
-      daughter.weight = Math.max(0.5, Math.min(1, neuron.weight - 0.05));
+      daughter.weight = daughter.generation === 2 ? 0.5 : Math.max(0.5, Math.min(1, neuron.weight - 0.05));
       daughter.confidence = daughter.weight;
       daughter.inheritedFrom = neuron.id;
       this.connectNeurons(neuron.id, daughter.id, 0.72, { source: 'evolution' });
