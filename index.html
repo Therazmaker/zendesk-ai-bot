@@ -123,6 +123,7 @@
         <div class="stat"><div class="text-label">Velas vistas</div><div class="text-stat" id="statObs">0</div></div>
         <div class="stat"><div class="text-label">Salud cerebro</div><div class="text-stat" id="statHealth">0%</div></div>
         <button class="btn-ghost" id="btnSurvivalReport">Ver Reporte Detallado</button>
+        <button class="btn-ghost" id="btnExportPro">📥 Exportar Patrones Pro</button>
         <button class="btn-ghost btn-warning" id="btnPruneNoise">🧹 Purgar Ruido</button>
       </div>
     </header>
@@ -157,6 +158,11 @@
           <div class="field-group"><label>Outcome</label><select name="outcome"><option>WIN</option><option>LOSS</option></select></div>
         </form>
         <div style="margin-top:8px;"><button class="btn-primary" id="btnCandle">Aprender de vela</button></div>
+        <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+          <button class="btn-ghost" id="btnExportProPanel">📥 Exportar Patrones Pro</button>
+        </div>
+        <textarea class="tx-area" id="exportOutput" readonly style="margin-top:8px; min-height:110px;" placeholder="Aquí aparecerá el JSON exportado de patrones y reglas élite."></textarea>
+
 
         <div class="text-label" style="margin-top:14px;">Carga de Datos</div>
         <div style="display:flex; gap:8px; align-items:center;">
@@ -787,6 +793,37 @@ class LivingBrain {
     });
   }
 
+  normalizeExportTriggers(triggers = {}) {
+    return {
+      ...triggers,
+      bodyRatio: triggers.bodyRatio ?? null,
+      wickUpper: triggers.wickUpper ?? null,
+      wickLower: triggers.wickLower ?? null,
+      rsiRange: triggers.rsiRange ?? null
+    };
+  }
+
+  exportElitePatterns() {
+    const elite = Array.from(this.neurons.values())
+      .filter((neuron) => ['pattern', 'rule'].includes(neuron.type) && neuron.weight > 0.6 && neuron.activations > 20)
+      .map((neuron) => ({
+        id: neuron.id,
+        name: neuron.name,
+        type: neuron.type,
+        activations: neuron.activations,
+        description: neuron.description,
+        signal: neuron.signal,
+        weight: neuron.weight,
+        triggers: this.normalizeExportTriggers(neuron.triggers)
+      }));
+
+    return {
+      exportedAt: new Date().toISOString(),
+      total: elite.length,
+      neurons: elite
+    };
+  }
+
   exportState() {
     return {
       generation: this.generation,
@@ -1116,6 +1153,32 @@ document.getElementById('btnPruneNoise').onclick = () => {
   renderStats();
   saveState();
 };
+
+const handleExportPro = async () => {
+  const payload = brain.exportElitePatterns();
+  const json = JSON.stringify(payload, null, 2);
+  const output = document.getElementById('exportOutput');
+  if (output) output.value = json;
+
+  let copied = false;
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(json);
+      copied = true;
+    } catch (error) {
+      copied = false;
+    }
+  }
+
+  const baseMessage = `Exportación completada. Neuronas elite encontradas: ${payload.total}.`;
+  alert(copied ? `${baseMessage} JSON copiado al portapapeles.` : `${baseMessage} Copia manual desde el textarea.`);
+  addLog(copied
+    ? `Exportación Pro lista (${payload.total} neuronas). JSON copiado al portapapeles.`
+    : `Exportación Pro lista (${payload.total} neuronas). Copia manual requerida.`);
+};
+
+document.getElementById('btnExportPro').onclick = handleExportPro;
+document.getElementById('btnExportProPanel').onclick = handleExportPro;
 
 
 addEventListener('backtest:tick', (event) => {
