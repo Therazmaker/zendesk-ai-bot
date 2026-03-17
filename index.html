@@ -129,11 +129,6 @@
         <button class="btn-ghost" id="btnExportPro">📥 Exportar Patrones Pro</button>
         <button class="btn-ghost btn-warning" id="btnPruneNoise">🧹 Purgar Ruido</button>
       </div>
-      <div class="mode-controls" id="testModeControls">
-        <button class="mode-btn" data-test-mode="discovery">Fase 1: Descubrimiento</button>
-        <button class="mode-btn" data-test-mode="validation">Fase 2: Validación</button>
-        <button class="mode-btn" data-test-mode="selection">Fase 3: Selección</button>
-      </div>
       <div class="text-sm" id="testModeHint">Modo actual: —</div>
     </header>
 
@@ -176,7 +171,11 @@
         <div class="text-label" style="margin-top:14px;">Carga de Datos</div>
         <div style="display:flex; gap:8px; align-items:center;">
           <input type="file" id="dataFile" accept=".csv,.json" class="tx-area" style="min-height:42px; padding:8px 10px;" />
-          <button class="btn-primary" id="btnBacktest">Subir CSV y ejecutar</button>
+          <div class="mode-controls" id="phaseTriggers">
+            <button class="mode-btn" data-phase="discovery">▶ Fase 1: Descubrimiento</button>
+            <button class="mode-btn" data-phase="validation">🛡️ Fase 2: Validación</button>
+            <button class="mode-btn" data-phase="selection">⚔️ Fase 3: Selección Radical</button>
+          </div>
         </div>
 
         <div class="text-label" style="margin-top:14px;">Monitor de Salud</div>
@@ -257,6 +256,10 @@ class LivingBrain {
     this.superNeuronMinDaughters = 3;
     this.criticalPopulationNotified = false;
     this.testMode = 'discovery';
+    this.maxNeurons = 1000;
+    this.autoLearn = true;
+    this.pruningEnabled = false;
+    this.radicalPruning = false;
     this.testModes = {
       discovery: {
         key: 'discovery',
@@ -289,7 +292,9 @@ class LivingBrain {
   }
 
   getModeConfig(mode = this.testMode) {
-    return this.testModes[mode] || this.testModes.discovery;
+    const base = this.testModes[mode] || this.testModes.discovery;
+    const deathThreshold = this.radicalPruning ? 0.45 : base.deathThreshold;
+    return { ...base, autoLearn: this.autoLearn, entropyEnabled: this.pruningEnabled && base.entropyEnabled, deathThreshold };
   }
 
   setTestMode(mode) {
@@ -300,7 +305,25 @@ class LivingBrain {
     if (nextMode === 'validation' && previousMode !== 'validation') this.resetWinRateTracking();
     if (nextMode === 'selection' && previousMode !== 'selection') this.pendingPatterns = [];
 
+    if (nextMode === 'discovery') {
+      this.autoLearn = true;
+      this.pruningEnabled = false;
+      this.radicalPruning = false;
+    } else if (nextMode === 'validation') {
+      this.autoLearn = false;
+      this.pruningEnabled = true;
+      this.radicalPruning = false;
+    } else {
+      this.autoLearn = false;
+      this.pruningEnabled = true;
+      this.radicalPruning = true;
+    }
+
     return this.getModeConfig();
+  }
+
+  resetPerformance() {
+    this.resetWinRateTracking();
   }
 
   resetWinRateTracking() {
@@ -394,6 +417,12 @@ class LivingBrain {
     }
 
     return { created, removed };
+  }
+
+  mergeAndGold() {
+    const fusionSummary = this.mergeEliteNeurons();
+    const pruneSummary = this.pruneByBacktestWinRate(this.radicalPruning ? 55 : 50);
+    return { fusionSummary, pruneSummary };
   }
 
   promoteMasterNeuron(neuron) {
@@ -846,15 +875,9 @@ class LivingBrain {
       }
     }
 
-    let hardPruneSummary = null;
-    if (this.testMode === 'selection') hardPruneSummary = this.pruneByBacktestWinRate(55);
-
-    let fusionSummary = null;
-    if (this.testMode === 'selection' && this.getModeConfig().fusionEnabled) fusionSummary = this.mergeEliteNeurons();
-
     const report = this.generateSurvivalReport();
     if (typeof saveState === 'function') await saveState('backtest');
-    return { candlesProcessed: Math.max(0, candles.length - 1), wins, losses, activations: wins + losses, report, fusionSummary, hardPruneSummary };
+    return { candlesProcessed: Math.max(0, candles.length - 1), wins, losses, activations: wins + losses, report };
   }
 
   pruneByBacktestWinRate(minWinRate = 55) {
@@ -1080,6 +1103,7 @@ class LivingBrain {
     const modeConfig = this.getModeConfig();
     const activationThreshold = neuron?.activationsThreshold ?? 15;
     const canBePruned = (neuron?.activations ?? 0) >= activationThreshold;
+    if (!this.pruningEnabled) return false;
     if (!neuron || neuron.type !== 'pattern' || neuron.isProtected || neuron.isTesting || neuron.isMaster || neuron.weight >= modeConfig.deathThreshold || !canBePruned) return false;
     if (modeConfig.deathThreshold <= 0.05) return false;
     if (this.shouldSuspendPruning()) return false;
@@ -1095,7 +1119,8 @@ class LivingBrain {
 
   checkForNewNeurons() {
     if (['validation', 'selection'].includes(this.testMode)) return;
-    if (!this.getModeConfig().autoLearn) return { autoLearnDisabled: true, pending: this.pendingPatterns.length };
+    if (!this.autoLearn) return { autoLearnDisabled: true, pending: this.pendingPatterns.length };
+    if (this.neurons.size >= this.maxNeurons) return { maxCapacity: true, pending: this.pendingPatterns.length };
     const groups = new Map();
     this.pendingPatterns.forEach((p) => {
       const signature = `${p.features.trend}|${p.features.bodyRatio.toFixed(2)}|${p.features.wickLower.toFixed(2)}`;
@@ -1284,6 +1309,7 @@ class LivingBrain {
       totalNeuronsDied: this.totalNeuronsDied,
       autoPatternCounter: this.autoPatternCounter,
       testMode: this.testMode,
+      maxNeurons: this.maxNeurons,
       neurons: Array.from(this.neurons.values()),
       performanceHistory: this.performanceHistory.slice(-1313)
     };
@@ -1297,11 +1323,13 @@ class LivingBrain {
     this.totalNeuronsBorn = state.totalNeuronsBorn || 0;
     this.totalNeuronsDied = state.totalNeuronsDied || 0;
     this.autoPatternCounter = state.autoPatternCounter || 0;
+    this.maxNeurons = state.maxNeurons || 1000;
     this.testMode = this.testModes[state.testMode] ? state.testMode : 'discovery';
     this.performanceHistory = (state.performanceHistory || []).slice(-1313);
     this.neurons = new Map((state.neurons || []).map(n => [n.id, { successfulActivations: 0, activationsThreshold: 15, isTesting: false, ...n }]));
     for (const neuron of this.neurons.values()) this.promoteMasterNeuron(neuron);
     if (!this.totalNeuronsBorn) this.totalNeuronsBorn = this.neurons.size;
+    this.setTestMode(this.testMode);
 
   }
 
@@ -1570,8 +1598,8 @@ function renderTestMode() {
   const mode = brain.getModeConfig();
   const hint = document.getElementById('testModeHint');
   if (hint) hint.textContent = `Modo actual: ${mode.label} · autoLearn:${mode.autoLearn ? 'ON' : 'OFF'} · entropy:${mode.entropyEnabled ? 'ON' : 'OFF'} · deathThreshold:${mode.deathThreshold}`;
-  document.querySelectorAll('[data-test-mode]').forEach((btn) => {
-    btn.classList.toggle('active', btn.dataset.testMode === brain.testMode);
+  document.querySelectorAll('[data-phase]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.phase === brain.testMode);
   });
 }
 
@@ -1655,13 +1683,34 @@ document.getElementById('btnCandle').onclick = () => {
   renderStats(); renderNeuronsList(); saveState();
 };
 
-document.getElementById('btnBacktest').onclick = async () => {
+async function runPhase(phase) {
+  const selectedPhase = ['discovery', 'validation', 'selection'].includes(phase) ? phase : 'discovery';
   const file = document.getElementById('dataFile').files[0];
+
   if (!file) {
     const message = 'Selecciona un archivo CSV o JSON antes de correr backtest.';
     alert(message);
-    return addLog(message);
+    addLog(message);
+    return;
   }
+
+  if (selectedPhase === 'discovery' && brain.neurons.size >= brain.maxNeurons) {
+    const warning = '⚠️ Capacidad máxima alcanzada. Por favor, ejecuta Fase 2 o 3 para optimizar el cerebro.';
+    alert(warning);
+    addLog(warning);
+    return;
+  }
+
+  brain.setTestMode(selectedPhase);
+  if (selectedPhase === 'validation') {
+    brain.resetPerformance();
+    addLog('🧪 Fase 2 activada: creación bloqueada y métricas WIN/LOSS reiniciadas.');
+  } else if (selectedPhase === 'selection') {
+    addLog('⚔️ Fase 3 activada: selección radical habilitada (umbral de muerte 0.45).');
+  } else {
+    addLog('▶ Fase 1 activada: aprendizaje automático habilitado, poda desactivada.');
+  }
+  renderTestMode();
 
   try {
     const raw = await file.text();
@@ -1682,16 +1731,22 @@ document.getElementById('btnBacktest').onclick = async () => {
 
     const result = await brain.runBacktest(candles);
     addLog(`Backtest finalizado en ${result.candlesProcessed} velas. Activaciones:${result.activations} WIN:${result.wins} LOSS:${result.losses}.`);
-    if (result.fusionSummary?.created) addLog(`🧬 Fusión completada: ${result.fusionSummary.created} Súper Neurona creada.`);
+    if (selectedPhase === 'selection') {
+      const merged = brain.mergeAndGold();
+      if (merged.fusionSummary?.created || merged.pruneSummary?.removed) {
+        addLog(`🥇 mergeAndGold ejecutado: fusionadas ${merged.fusionSummary?.created || 0}, podadas ${merged.pruneSummary?.removed || 0}.`);
+      }
+    }
     addLogEntries(result.report?.lines || []);
     renderStats();
     renderNeuronsList();
+    await saveState('mode');
   } catch (error) {
     const message = `Error procesando archivo: ${error.message}`;
     alert(message);
     addLog(message);
   }
-};
+}
 
 document.getElementById('btnObserve').onclick = () => {
   const res = brain.observeCandle(getObserveCandle());
@@ -1752,13 +1807,10 @@ addEventListener('backtest:tick', (event) => {
   renderNeuronsList();
 });
 
-document.getElementById('testModeControls').onclick = async (e) => {
-  const btn = e.target.closest('[data-test-mode]');
+document.getElementById('phaseTriggers').onclick = async (e) => {
+  const btn = e.target.closest('[data-phase]');
   if (!btn) return;
-  const mode = brain.setTestMode(btn.dataset.testMode);
-  addLog(`Modo de test actualizado: ${mode.label}.`);
-  renderTestMode();
-  await saveState('mode');
+  await runPhase(btn.dataset.phase);
 };
 
 document.getElementById('tabs').onclick = (e) => {
