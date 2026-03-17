@@ -242,6 +242,7 @@ class LivingBrain {
       { key: 'vela sin mecha', label: 'Vela sin Mecha', type: 'pattern', signal: 'BUY', regex: /vela\s+sin\s+mecha|marubozu|sin mecha/i },
       { key: 'ruptura', label: 'Ruptura', type: 'rule', signal: 'WAIT', regex: /ruptura|breakout/i }
     ];
+    this.variantFamilies = new Map();
   }
 
   extractFeatures(c) {
@@ -302,28 +303,53 @@ class LivingBrain {
     return triggers;
   }
 
-  createSpecialistVariant(mother) {
-    if (!mother) return null;
-    const filterType = this.pickRandomConfluenceFilter();
-    const specialistName = `${mother.name} (Especialista ${filterType})`;
-    const specialistTriggers = this.addConfluenceFilterToTriggers(mother.triggers, filterType);
+  createVariant(mother) {
+    if (!mother || mother.variantFamilyActive) return [];
+    const filters = ['EMA', 'RSI', 'Estocástico'];
+    const daughters = filters.map((filterType) => {
+      const daughter = this.birthNeuron({
+        name: `${mother.name} (Hija ${filterType})`,
+        features: this.addConfluenceFilterToTriggers(mother.triggers, filterType),
+        signal: mother.signal,
+        description: `Variante de confluencia ${filterType} derivada de ${mother.name}`,
+        generation: Math.max(2, (mother.generation || 1) + 1),
+        weight: Math.max(0.55, mother.weight * 0.95)
+      });
 
-    const variant = this.birthNeuron({
-      name: specialistName,
-      features: specialistTriggers,
-      signal: mother.signal,
-      description: `Variante especialista nacida del linaje ganador de ${mother.name}`,
-      generation: Math.max(2, (mother.generation || 1) + 1),
-      weight: 0.8
+      daughter.lineage = {
+        motherId: mother.id,
+        motherName: mother.name,
+        extraFilter: filterType,
+        role: 'daughter',
+        familyId: `${mother.id}-${Date.now()}`
+      };
+      daughter.recentOutcomes = [];
+      return daughter;
     });
 
-    variant.lineage = {
-      motherId: mother.id,
-      motherName: mother.name,
-      extraFilter: filterType,
-      role: 'daughter'
-    };
-    return variant;
+    mother.variantFamilyActive = true;
+    mother.recentOutcomes = mother.recentOutcomes || [];
+    const familyId = daughters[0]?.lineage?.familyId;
+    daughters.forEach((daughter) => {
+      daughter.lineage.familyId = familyId;
+      this.connectNeurons(mother.id, daughter.id, 0.7, { source: 'golden-moment' });
+    });
+    this.variantFamilies.set(familyId, { motherId: mother.id, daughterIds: daughters.map((d) => d.id), resolved: false });
+
+    if (typeof addLog === 'function' && daughters.length) {
+      addLog(`✨ Momento de oro detectado en ${mother.name}. Nacen variantes EMA/RSI/Estocástico para competir.`);
+    }
+    return daughters;
+  }
+
+  evaluateGoldenMoment(neuron) {
+    if (!neuron || neuron.variantFamilyActive) return;
+    const recent = neuron.recentOutcomes || [];
+    if (recent.length < 10) return;
+    const lastTen = recent.slice(-10);
+    const wins = lastTen.filter((r) => r === 'WIN').length;
+    const accuracy = (wins / 10) * 100;
+    if (accuracy >= 80) this.createVariant(neuron);
   }
 
   normalizeConnection(conn) {
@@ -482,8 +508,7 @@ class LivingBrain {
     const candles = Array.isArray(data) ? data : [];
     let wins = 0;
     let losses = 0;
-    const specialistTrackers = new Map();
-    const specialistVariants = new Map();
+    this.variantFamilies = new Map();
 
     for (let i = 0; i < candles.length - 1; i++) {
       const candle = candles[i];
@@ -510,28 +535,6 @@ class LivingBrain {
         const success = predictedDirection === nextDirection;
         this.applyNeuronOutcome(neuron, success ? 'WIN' : 'LOSS');
 
-        if (!specialistTrackers.has(neuron.id)) {
-          specialistTrackers.set(neuron.id, { activations: 0, wins: 0, variantCreated: false });
-        }
-        const tracker = specialistTrackers.get(neuron.id);
-        tracker.activations += 1;
-        tracker.wins += success ? 1 : 0;
-        const streakWinRate = tracker.activations ? (tracker.wins / tracker.activations) * 100 : 0;
-
-        if (streakWinRate <= 80) {
-          tracker.activations = 0;
-          tracker.wins = 0;
-        } else if (!tracker.variantCreated && tracker.activations >= 15) {
-          const variant = this.createSpecialistVariant(neuron);
-          if (variant) {
-            tracker.variantCreated = true;
-            specialistVariants.set(neuron.id, variant.id);
-            if (typeof addLog === 'function') {
-              addLog(`🧬 Variante creada: ${variant.name} (peso inicial 0.8) desde ${neuron.name}.`);
-            }
-          }
-        }
-
         if (success) {
           neuron.successfulActivations += 1;
           wins += 1;
@@ -548,21 +551,32 @@ class LivingBrain {
 
     this.backtestCycles += 1;
 
-    specialistVariants.forEach((daughterId, motherId) => {
-      const mother = this.neurons.get(motherId);
-      const daughter = this.neurons.get(daughterId);
-      if (!mother || !daughter) return;
+    this.variantFamilies.forEach((family) => {
+      if (family.resolved) return;
+      const mother = this.neurons.get(family.motherId);
+      if (!mother) return;
+      const daughters = family.daughterIds
+        .map((id) => this.neurons.get(id))
+        .filter(Boolean);
+      if (!daughters.length) return;
+
       const motherWinRate = this.getNeuronWinRate(mother);
-      const daughterWinRate = this.getNeuronWinRate(daughter);
-      if (daughterWinRate > motherWinRate) {
-        this.neurons.delete(motherId);
+      const bestDaughter = daughters.reduce((best, current) => (
+        this.getNeuronWinRate(current) > this.getNeuronWinRate(best) ? current : best
+      ), daughters[0]);
+      const bestDaughterWinRate = this.getNeuronWinRate(bestDaughter);
+
+      if (bestDaughterWinRate > motherWinRate) {
+        this.neurons.delete(mother.id);
         this.totalNeuronsDied += 1;
-        daughter.lineage = { ...(daughter.lineage || {}), promotedAsMaster: true };
-        daughter.generation = mother.generation;
+        bestDaughter.lineage = { ...(bestDaughter.lineage || {}), promotedAsMaster: true };
+        bestDaughter.generation = mother.generation;
         if (typeof addLog === 'function') {
-          addLog(`👑 ${daughter.name} superó a su madre (${daughterWinRate.toFixed(1)}% > ${motherWinRate.toFixed(1)}%) y asciende como Neurona Maestra.`);
+          addLog(`👑 Selección natural: ${bestDaughter.name} reemplaza a ${mother.name} (${bestDaughterWinRate.toFixed(1)}% vs ${motherWinRate.toFixed(1)}%).`);
         }
       }
+
+      family.resolved = true;
     });
 
     for (const neuron of this.neurons.values()) {
@@ -726,6 +740,7 @@ class LivingBrain {
     const matching = this.findMatchingNeuron(features);
     if (matching) {
       this.applyNeuronOutcome(matching, outcome);
+      this.evaluateGoldenMoment(matching);
       return { reinforced: matching.id };
     }
     this.pendingPatterns.push({ features, outcome, timestamp: Date.now() });
@@ -740,6 +755,10 @@ class LivingBrain {
     neuron.weight = Math.min(1, Math.max(0, neuron.weight + delta));
     neuron.correctPredictions += outcome === 'WIN' ? 1 : 0;
     neuron.confidence = neuron.weight;
+    neuron.recentOutcomes = neuron.recentOutcomes || [];
+    neuron.recentOutcomes.push(outcome);
+    if (neuron.recentOutcomes.length > 10) neuron.recentOutcomes = neuron.recentOutcomes.slice(-10);
+    this.evaluateGoldenMoment(neuron);
     this.autopruning(neuron);
   }
 
