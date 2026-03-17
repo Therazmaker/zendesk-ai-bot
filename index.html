@@ -255,6 +255,8 @@ class LivingBrain {
       wickLower: lowerWick / body,
       trend: c.trend || (c.close > c.open ? 'bullish' : c.close < c.open ? 'bearish' : 'neutral'),
       rsi: c.rsi ?? 50,
+      stochastic: c.stochastic ?? c.stoch ?? c.rsi ?? 50,
+      emaBias: c.emaBias || (c.close >= c.open ? 'above' : 'below'),
       rsiRange: { min: Math.max(0, (c.rsi ?? 50) - 8), max: Math.min(100, (c.rsi ?? 50) + 8) },
       session: c.session || 'asia'
     };
@@ -264,6 +266,64 @@ class LivingBrain {
     const id = `n_${String(this.neurons.size + 1).padStart(3, '0')}`;
     this.totalNeuronsBorn += 1;
     return { id, born: Date.now(), name, type, triggers, weight, activations: 0, correctPredictions: 0, successfulActivations: 0, connections: [], description, signal, confidence: weight, generation, activationLimit: 6 };
+  }
+
+  getNeuronWinRate(neuron) {
+    if (!neuron || !neuron.activations) return 0;
+    return (neuron.correctPredictions / neuron.activations) * 100;
+  }
+
+  pickRandomConfluenceFilter() {
+    const options = ['EMA', 'RSI', 'Estocástico'];
+    return options[Math.floor(Math.random() * options.length)];
+  }
+
+  addConfluenceFilterToTriggers(baseTriggers = {}, filterType = 'RSI') {
+    const triggers = { ...baseTriggers };
+    if (filterType === 'EMA') {
+      triggers.emaBias = Math.random() > 0.5 ? 'above' : 'below';
+      return triggers;
+    }
+
+    if (filterType === 'Estocástico') {
+      const center = Math.floor(Math.random() * 61) + 20;
+      triggers.stochasticRange = {
+        min: Math.max(0, center - 12),
+        max: Math.min(100, center + 12)
+      };
+      return triggers;
+    }
+
+    const center = Math.floor(Math.random() * 61) + 20;
+    triggers.rsiRange = {
+      min: Math.max(0, center - 10),
+      max: Math.min(100, center + 10)
+    };
+    return triggers;
+  }
+
+  createSpecialistVariant(mother) {
+    if (!mother) return null;
+    const filterType = this.pickRandomConfluenceFilter();
+    const specialistName = `${mother.name} (Especialista ${filterType})`;
+    const specialistTriggers = this.addConfluenceFilterToTriggers(mother.triggers, filterType);
+
+    const variant = this.birthNeuron({
+      name: specialistName,
+      features: specialistTriggers,
+      signal: mother.signal,
+      description: `Variante especialista nacida del linaje ganador de ${mother.name}`,
+      generation: Math.max(2, (mother.generation || 1) + 1),
+      weight: 0.8
+    });
+
+    variant.lineage = {
+      motherId: mother.id,
+      motherName: mother.name,
+      extraFilter: filterType,
+      role: 'daughter'
+    };
+    return variant;
   }
 
   normalizeConnection(conn) {
@@ -422,6 +482,8 @@ class LivingBrain {
     const candles = Array.isArray(data) ? data : [];
     let wins = 0;
     let losses = 0;
+    const specialistTrackers = new Map();
+    const specialistVariants = new Map();
 
     for (let i = 0; i < candles.length - 1; i++) {
       const candle = candles[i];
@@ -447,6 +509,29 @@ class LivingBrain {
         const predictedDirection = neuron.signal === 'BUY' ? 'bullish' : neuron.signal === 'SELL' ? 'bearish' : 'neutral';
         const success = predictedDirection === nextDirection;
         this.applyNeuronOutcome(neuron, success ? 'WIN' : 'LOSS');
+
+        if (!specialistTrackers.has(neuron.id)) {
+          specialistTrackers.set(neuron.id, { activations: 0, wins: 0, variantCreated: false });
+        }
+        const tracker = specialistTrackers.get(neuron.id);
+        tracker.activations += 1;
+        tracker.wins += success ? 1 : 0;
+        const streakWinRate = tracker.activations ? (tracker.wins / tracker.activations) * 100 : 0;
+
+        if (streakWinRate <= 80) {
+          tracker.activations = 0;
+          tracker.wins = 0;
+        } else if (!tracker.variantCreated && tracker.activations >= 15) {
+          const variant = this.createSpecialistVariant(neuron);
+          if (variant) {
+            tracker.variantCreated = true;
+            specialistVariants.set(neuron.id, variant.id);
+            if (typeof addLog === 'function') {
+              addLog(`🧬 Variante creada: ${variant.name} (peso inicial 0.8) desde ${neuron.name}.`);
+            }
+          }
+        }
+
         if (success) {
           neuron.successfulActivations += 1;
           wins += 1;
@@ -462,6 +547,24 @@ class LivingBrain {
     }
 
     this.backtestCycles += 1;
+
+    specialistVariants.forEach((daughterId, motherId) => {
+      const mother = this.neurons.get(motherId);
+      const daughter = this.neurons.get(daughterId);
+      if (!mother || !daughter) return;
+      const motherWinRate = this.getNeuronWinRate(mother);
+      const daughterWinRate = this.getNeuronWinRate(daughter);
+      if (daughterWinRate > motherWinRate) {
+        this.neurons.delete(motherId);
+        this.totalNeuronsDied += 1;
+        daughter.lineage = { ...(daughter.lineage || {}), promotedAsMaster: true };
+        daughter.generation = mother.generation;
+        if (typeof addLog === 'function') {
+          addLog(`👑 ${daughter.name} superó a su madre (${daughterWinRate.toFixed(1)}% > ${motherWinRate.toFixed(1)}%) y asciende como Neurona Maestra.`);
+        }
+      }
+    });
+
     for (const neuron of this.neurons.values()) {
       if (neuron.autoDiscovered && neuron.weight > 0.6) {
         neuron.validationStatus = 'Patrón Validado';
@@ -734,6 +837,8 @@ class LivingBrain {
     if (triggers.wickLower) { total += 1; score += f.wickLower >= (triggers.wickLower.min ?? 0) ? 1 : 0; }
     if (triggers.trend) { total += 1; score += f.trend === triggers.trend ? 1 : 0; }
     if (triggers.rsiRange) { total += 1; score += (f.rsi >= triggers.rsiRange.min && f.rsi <= triggers.rsiRange.max) ? 1 : 0; }
+    if (triggers.emaBias) { total += 1; score += f.emaBias === triggers.emaBias ? 1 : 0; }
+    if (triggers.stochasticRange) { total += 1; score += (f.stochastic >= triggers.stochasticRange.min && f.stochastic <= triggers.stochasticRange.max) ? 1 : 0; }
     return total ? score / total : 0;
   }
 
