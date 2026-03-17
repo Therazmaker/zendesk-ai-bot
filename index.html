@@ -297,7 +297,12 @@ class LivingBrain {
   }
 
   makeNeuron({ name, type, triggers, weight, description, signal, generation = 1 }) {
-    const id = `n_${String(this.neurons.size + 1).padStart(3, '0')}`;
+    let index = this.neurons.size + 1;
+    let id = `n_${String(index).padStart(3, '0')}`;
+    while (this.neurons.has(id)) {
+      index += 1;
+      id = `n_${String(index).padStart(3, '0')}`;
+    }
     this.totalNeuronsBorn += 1;
     return { id, born: Date.now(), name, type, triggers, weight, activations: 0, activationsThreshold: 15, correctPredictions: 0, successfulActivations: 0, connections: [], description, signal, confidence: weight, generation, activationLimit: 6, isTesting: false };
   }
