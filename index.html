@@ -172,9 +172,9 @@
         <div style="display:flex; gap:8px; align-items:center;">
           <input type="file" id="dataFile" accept=".csv,.json" class="tx-area" style="min-height:42px; padding:8px 10px;" />
           <div class="mode-controls" id="phaseTriggers">
-            <button class="mode-btn" data-phase="discovery">▶ Fase 1: Descubrimiento</button>
+            <button class="mode-btn" data-phase="discovery">🚀 Fase 1: Descubrimiento</button>
             <button class="mode-btn" data-phase="validation">🛡️ Fase 2: Validación</button>
-            <button class="mode-btn" data-phase="selection">⚔️ Fase 3: Selección Radical</button>
+            <button class="mode-btn" data-phase="selection">⚔️ Fase 3: Fusión Radical</button>
           </div>
         </div>
 
@@ -256,7 +256,7 @@ class LivingBrain {
     this.superNeuronMinDaughters = 3;
     this.criticalPopulationNotified = false;
     this.testMode = 'discovery';
-    this.maxNeurons = 1000;
+    this.maxNeurons = 500;
     this.autoLearn = true;
     this.pruningEnabled = false;
     this.radicalPruning = false;
@@ -281,7 +281,7 @@ class LivingBrain {
       },
       selection: {
         key: 'selection',
-        label: 'Fase 3: Selección',
+        label: 'Fase 3: Fusión Radical',
         autoLearn: false,
         entropyEnabled: true,
         deathThreshold: 0.4,
@@ -294,7 +294,7 @@ class LivingBrain {
   getModeConfig(mode = this.testMode) {
     const base = this.testModes[mode] || this.testModes.discovery;
     const deathThreshold = this.radicalPruning ? 0.45 : base.deathThreshold;
-    return { ...base, autoLearn: this.autoLearn, entropyEnabled: this.pruningEnabled && base.entropyEnabled, deathThreshold };
+    return { ...base, autoLearn: base.autoLearn, entropyEnabled: this.pruningEnabled && base.entropyEnabled, deathThreshold };
   }
 
   setTestMode(mode) {
@@ -307,14 +307,17 @@ class LivingBrain {
 
     if (nextMode === 'discovery') {
       this.autoLearn = true;
+      this.maxNeurons = 500;
       this.pruningEnabled = false;
       this.radicalPruning = false;
     } else if (nextMode === 'validation') {
       this.autoLearn = false;
+      this.maxNeurons = 1000;
       this.pruningEnabled = true;
       this.radicalPruning = false;
     } else {
       this.autoLearn = false;
+      this.maxNeurons = 1000;
       this.pruningEnabled = true;
       this.radicalPruning = true;
     }
@@ -809,11 +812,12 @@ class LivingBrain {
     return removableIds.length;
   }
 
-  async runBacktest(data = []) {
+  async runBacktest(data = [], options = {}) {
     const candles = Array.isArray(data) ? data : [];
     let wins = 0;
     let losses = 0;
     this.variantFamilies = new Map();
+    const onTick = typeof options.onTick === 'function' ? options.onTick : null;
 
     for (let i = 0; i < candles.length - 1; i++) {
       const candle = candles[i];
@@ -853,7 +857,9 @@ class LivingBrain {
       this.performanceHistory.push({ timestamp: Date.now(), index: i + 1, outcome: candleOutcome, wins, losses, active: activated.length });
       if (this.performanceHistory.length > 1313) this.performanceHistory = this.performanceHistory.slice(-1313);
       if (this.observations % 10 === 0) this.applyEntropy();
-      dispatchEvent(new CustomEvent('backtest:tick', { detail: { index: i + 1, total: candles.length - 1, wins, losses, active: activated.length } }));
+      const tickDetail = { index: i + 1, total: candles.length - 1, wins, losses, active: activated.length };
+      dispatchEvent(new CustomEvent('backtest:tick', { detail: tickDetail }));
+      if (onTick) onTick(tickDetail);
       await new Promise((resolve) => setTimeout(resolve, this.backtestDelayMs));
     }
 
@@ -876,8 +882,11 @@ class LivingBrain {
     }
 
     const report = this.generateSurvivalReport();
+    const candlesProcessed = Math.max(0, candles.length - 1);
+    let eliteSummary = null;
+    if (this.testMode === 'selection' && candlesProcessed >= 1313) eliteSummary = this.consolidateElite();
     if (typeof saveState === 'function') await saveState('backtest');
-    return { candlesProcessed: Math.max(0, candles.length - 1), wins, losses, activations: wins + losses, report };
+    return { candlesProcessed, wins, losses, activations: wins + losses, report, eliteSummary };
   }
 
   pruneByBacktestWinRate(minWinRate = 55) {
@@ -967,6 +976,68 @@ class LivingBrain {
 
     console.log(lines.join('\n'));
     return { lines, ranked, grouped, falseProphets };
+  }
+
+  sanitizeTriggerName(name = '') {
+    return String(name || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\d+(?:\.\d+)?/g, '#').replace(/\s+/g, ' ').trim();
+  }
+
+  consolidateElite() {
+    const all = Array.from(this.neurons.values());
+    const survivors = all.filter((neuron) => {
+      const winRate = this.getNeuronWinRate(neuron);
+      return winRate >= 55 && (neuron.activations || 0) >= 20;
+    });
+
+    const survivorIds = new Set(survivors.map((neuron) => neuron.id));
+    let removedBySurvival = 0;
+    all.forEach((neuron) => {
+      if (!survivorIds.has(neuron.id) && this.neurons.delete(neuron.id)) removedBySurvival += 1;
+    });
+
+    const groups = new Map();
+    survivors.forEach((neuron) => {
+      const key = this.sanitizeTriggerName(neuron.name);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(neuron);
+    });
+
+    let fused = 0;
+    groups.forEach((group, key) => {
+      if (group.length < 2) return;
+      const mergedTriggers = this.mergeTriggersWithAnd(group.map((n) => n.triggers));
+      if (!mergedTriggers) return;
+      const avgWeight = group.reduce((acc, n) => acc + (n.weight || 0), 0) / group.length;
+      const fusedNeuron = this.makeNeuron({
+        name: `Maestra ${this.simplifyNeuronName(key)}`,
+        type: 'super',
+        triggers: mergedTriggers,
+        weight: Math.min(1, avgWeight + 0.05),
+        description: `Fusión por similitud (${group.length})`,
+        signal: group.every((n) => n.signal === group[0].signal) ? group[0].signal : 'WAIT',
+        generation: Math.max(...group.map((n) => n.generation || 1)) + 1
+      });
+      fusedNeuron.isMaster = true;
+      fusedNeuron.isSuper = true;
+      fusedNeuron.priority = 'master';
+      this.neurons.set(fusedNeuron.id, fusedNeuron);
+      dispatchEvent(new CustomEvent('neuron:born', { detail: fusedNeuron }));
+
+      group.forEach((neuron) => {
+        if (this.neurons.delete(neuron.id)) fused += 1;
+      });
+      fused += 1;
+    });
+
+    for (const neuron of this.neurons.values()) {
+      neuron.connections = neuron.connections.filter((conn) => this.neurons.has(this.normalizeConnection(conn).to));
+      if (survivorIds.has(neuron.id) || neuron.priority === 'master') {
+        neuron.isMaster = true;
+        neuron.priority = 'master';
+      }
+    }
+
+    return { removedBySurvival, fused };
   }
 
   parseMarketData(raw, fileType = 'json') {
@@ -1117,10 +1188,37 @@ class LivingBrain {
     return Math.abs(a - b) <= 0.1;
   }
 
+  pruneWorstNeurons(count = 50) {
+    const candidates = Array.from(this.neurons.values())
+      .filter((neuron) => !neuron.isMaster && !neuron.isProtected)
+      .sort((a, b) => {
+        const scoreA = (a.weight || 0) + ((this.getNeuronWinRate(a) || 0) / 200) + ((a.activations || 0) / 500);
+        const scoreB = (b.weight || 0) + ((this.getNeuronWinRate(b) || 0) / 200) + ((b.activations || 0) / 500);
+        return scoreA - scoreB;
+      });
+
+    const removable = candidates.slice(0, count);
+    removable.forEach((neuron) => {
+      if (this.neurons.delete(neuron.id)) this.totalNeuronsDied += 1;
+    });
+
+    if (removable.length) {
+      for (const neuron of this.neurons.values()) {
+        neuron.connections = neuron.connections.filter((conn) => this.neurons.has(this.normalizeConnection(conn).to));
+      }
+    }
+
+    return removable.length;
+  }
+
   checkForNewNeurons() {
     if (['validation', 'selection'].includes(this.testMode)) return;
     if (!this.autoLearn) return { autoLearnDisabled: true, pending: this.pendingPatterns.length };
-    if (this.neurons.size >= this.maxNeurons) return { maxCapacity: true, pending: this.pendingPatterns.length };
+    if (this.neurons.size >= this.maxNeurons) {
+      const removed = this.pruneWorstNeurons(50);
+      if (typeof addLog === 'function' && removed) addLog(`🧹 Límite de población alcanzado. Se eliminaron ${removed} neuronas de bajo rendimiento.`);
+      if (this.neurons.size >= this.maxNeurons) return { maxCapacity: true, pending: this.pendingPatterns.length, removed };
+    }
     const groups = new Map();
     this.pendingPatterns.forEach((p) => {
       const signature = `${p.features.trend}|${p.features.bodyRatio.toFixed(2)}|${p.features.wickLower.toFixed(2)}`;
@@ -1441,6 +1539,8 @@ const canvas = document.getElementById('brainCanvas');
 const ctx = canvas.getContext('2d');
 const tooltip = document.getElementById('tooltip');
 let hoveredNode = null;
+let turboModeActive = false;
+let turboPendingRender = false;
 
 function colorForNeuron(node) {
   if (node?.isNew) return '#22F0FF';
@@ -1564,7 +1664,7 @@ function drawGraph(now) {
   }
 }
 
-function frame(ts) { drawGraph(ts); requestAnimationFrame(frame); }
+function frame(ts) { if (!turboModeActive || turboPendingRender) { drawGraph(ts); turboPendingRender = false; } requestAnimationFrame(frame); }
 
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
@@ -1694,25 +1794,20 @@ async function runPhase(phase) {
     return;
   }
 
-  if (selectedPhase === 'discovery' && brain.neurons.size >= brain.maxNeurons) {
-    const warning = '⚠️ Capacidad máxima alcanzada. Por favor, ejecuta Fase 2 o 3 para optimizar el cerebro.';
-    alert(warning);
-    addLog(warning);
-    return;
-  }
-
   brain.setTestMode(selectedPhase);
   if (selectedPhase === 'validation') {
     brain.resetPerformance();
     addLog('🧪 Fase 2 activada: creación bloqueada y métricas WIN/LOSS reiniciadas.');
   } else if (selectedPhase === 'selection') {
-    addLog('⚔️ Fase 3 activada: selección radical habilitada (umbral de muerte 0.45).');
+    addLog('⚔️ Fase 3 activada: fusión radical habilitada (umbral de muerte 0.45).');
   } else {
-    addLog('▶ Fase 1 activada: aprendizaje automático habilitado, poda desactivada.');
+    addLog('🚀 Fase 1 activada: aprendizaje automático habilitado, población máxima 500.');
   }
   renderTestMode();
 
   try {
+    turboModeActive = true;
+    turboPendingRender = false;
     const raw = await file.text();
     const candles = brain.parseMarketData(raw, file.name.split('.').pop() || 'json');
     if (!Array.isArray(candles) || !candles.length) {
@@ -1729,22 +1824,36 @@ async function runPhase(phase) {
       return;
     }
 
-    const result = await brain.runBacktest(candles);
+    const result = await brain.runBacktest(candles, {
+      onTick: ({ index, total }) => {
+        if (index === total) turboPendingRender = true;
+      }
+    });
     addLog(`Backtest finalizado en ${result.candlesProcessed} velas. Activaciones:${result.activations} WIN:${result.wins} LOSS:${result.losses}.`);
     if (selectedPhase === 'selection') {
-      const merged = brain.mergeAndGold();
-      if (merged.fusionSummary?.created || merged.pruneSummary?.removed) {
-        addLog(`🥇 mergeAndGold ejecutado: fusionadas ${merged.fusionSummary?.created || 0}, podadas ${merged.pruneSummary?.removed || 0}.`);
+      if (result.eliteSummary) {
+        addLog(`👑 consolidateElite ejecutado: removidas ${result.eliteSummary.removedBySurvival}, eventos de fusión ${result.eliteSummary.fused}.`);
+      } else {
+        const merged = brain.mergeAndGold();
+        if (merged.fusionSummary?.created || merged.pruneSummary?.removed) {
+          addLog(`🥇 mergeAndGold ejecutado: fusionadas ${merged.fusionSummary?.created || 0}, podadas ${merged.pruneSummary?.removed || 0}.`);
+        }
       }
     }
     addLogEntries(result.report?.lines || []);
     renderStats();
     renderNeuronsList();
     await saveState('mode');
+    turboModeActive = false;
+    turboPendingRender = true;
+    renderNeuronsList();
   } catch (error) {
     const message = `Error procesando archivo: ${error.message}`;
     alert(message);
     addLog(message);
+    turboModeActive = false;
+    turboPendingRender = true;
+    renderNeuronsList();
   }
 }
 
@@ -1804,7 +1913,7 @@ addEventListener('backtest:tick', (event) => {
   const { index, total, wins, losses, active } = event.detail;
   typeNarrative(`Backtest ${index}/${total}. Activadas: ${active}. WIN ${wins} · LOSS ${losses}.`);
   renderStats();
-  renderNeuronsList();
+  if (!turboModeActive) renderNeuronsList();
 });
 
 document.getElementById('phaseTriggers').onclick = async (e) => {
