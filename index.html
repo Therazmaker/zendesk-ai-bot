@@ -128,7 +128,7 @@
         <button class="btn-ghost" id="btnSurvivalReport">Ver Reporte Detallado</button>
         <button class="btn-ghost" id="btnExportPro">📥 Exportar Patrones Pro</button>
         <button class="btn-ghost btn-warning" id="btnPruneNoise">🧹 Purgar Ruido</button>
-        <button class="btn-ghost btn-warning" id="btnRadicalPurge">🚨 Purga Radical 0.50</button>
+        <button class="btn-ghost btn-warning" id="btnRadicalPurge">🧠 Smart Purge 0.58</button>
       </div>
       <div class="text-sm" id="testModeHint">Modo actual: —</div>
     </header>
@@ -443,8 +443,8 @@ class LivingBrain {
   }
 
   getOutcomeDelta(neuron, outcome) {
-    if (outcome === 'WIN') return neuron?.isMaster ? 0.25 : 0.15;
-    return neuron?.isMaster ? -0.20 : (neuron?.isProtected ? -0.05 : -0.20);
+    if (outcome === 'WIN') return neuron?.isMaster ? 0.08 : 0.05;
+    return neuron?.isMaster ? -0.12 : -0.08;
   }
 
   shouldSuspendPruning() {
@@ -813,12 +813,69 @@ class LivingBrain {
     return removableIds.length;
   }
 
-  purgeRadical050() {
-    const removableIds = [];
+  getMetricCenter(metric, fallback = 0) {
+    if (metric == null) return fallback;
+    if (typeof metric === 'number') return metric;
+    if (typeof metric === 'object') {
+      const min = Number.isFinite(metric.min) ? metric.min : fallback;
+      const max = Number.isFinite(metric.max) ? metric.max : min;
+      return (min + max) / 2;
+    }
+    return fallback;
+  }
+
+  compareTriggerSimilarity(a = {}, b = {}) {
+    const aBody = this.getMetricCenter(a.bodyRatio, 0.5);
+    const bBody = this.getMetricCenter(b.bodyRatio, 0.5);
+    const bodySimilarity = Math.max(0, 1 - (Math.abs(aBody - bBody) / 1));
+
+    const aWick = this.getMetricCenter(a.wickLower ?? a.wickUpper, 1);
+    const bWick = this.getMetricCenter(b.wickLower ?? b.wickUpper, 1);
+    const wickScale = Math.max(1, Math.abs(aWick), Math.abs(bWick));
+    const wickSimilarity = Math.max(0, 1 - (Math.abs(aWick - bWick) / wickScale));
+
+    const aRsi = this.getMetricCenter(a.rsiRange, 50);
+    const bRsi = this.getMetricCenter(b.rsiRange, 50);
+    const rsiSimilarity = Math.max(0, 1 - (Math.abs(aRsi - bRsi) / 100));
+
+    return (bodySimilarity + wickSimilarity + rsiSimilarity) / 3;
+  }
+
+  smartPurge() {
+    const WIN_RATE_THRESHOLD = 0.58;
+    const MIN_ACTIVATIONS = 30;
+    const removableIds = new Set();
+
     for (const [id, neuron] of this.neurons.entries()) {
-      const lowWeight = neuron.weight < 0.5;
-      const lowActivations = (neuron.activations || 0) < 15;
-      if (lowWeight || lowActivations) removableIds.push(id);
+      const activations = neuron.activations || 0;
+      const winRate = activations > 0 ? (neuron.correctPredictions / activations) : 0;
+      if (activations < MIN_ACTIVATIONS || neuron.weight < WIN_RATE_THRESHOLD || winRate < WIN_RATE_THRESHOLD) {
+        removableIds.add(id);
+      }
+    }
+
+    const survivingPatterns = Array.from(this.neurons.values())
+      .filter((neuron) => !removableIds.has(neuron.id) && neuron.type === 'pattern');
+
+    for (let i = 0; i < survivingPatterns.length; i += 1) {
+      for (let j = i + 1; j < survivingPatterns.length; j += 1) {
+        const a = survivingPatterns[i];
+        const b = survivingPatterns[j];
+        if (removableIds.has(a.id) || removableIds.has(b.id)) continue;
+
+        const similarity = this.compareTriggerSimilarity(a.triggers, b.triggers);
+        if (similarity <= 0.85) continue;
+
+        const winRateA = (a.activations || 0) > 0 ? (a.correctPredictions / a.activations) : 0;
+        const winRateB = (b.activations || 0) > 0 ? (b.correctPredictions / b.activations) : 0;
+
+        if (winRateA === winRateB) {
+          const newer = (a.born || 0) >= (b.born || 0) ? a : b;
+          removableIds.add(newer.id);
+        } else {
+          removableIds.add(winRateA > winRateB ? b.id : a.id);
+        }
+      }
     }
 
     removableIds.forEach((id) => {
@@ -830,7 +887,7 @@ class LivingBrain {
     }
 
     this.pendingPatterns = [];
-    return { removed: removableIds.length, survivors: this.neurons.size };
+    return { removed: removableIds.size, survivors: this.neurons.size };
   }
 
   async runBacktest(data = [], options = {}) {
@@ -1910,8 +1967,8 @@ document.getElementById('btnPruneNoise').onclick = () => {
 };
 
 document.getElementById('btnRadicalPurge').onclick = async () => {
-  const summary = brain.purgeRadical050();
-  addLog(`🚨 Purga Radical 0.50 ejecutada. Eliminadas ${summary.removed} neuronas. Supervivientes: ${summary.survivors}. PendingPatterns reiniciado.`);
+  const summary = brain.smartPurge();
+  addLog(`🧠 Smart Purge 0.58 ejecutada. Eliminadas ${summary.removed} neuronas. Supervivientes: ${summary.survivors}. PendingPatterns reiniciado.`);
   syncNodes();
   renderNeuronsList();
   renderStats();
