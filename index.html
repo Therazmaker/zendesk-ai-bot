@@ -266,7 +266,7 @@ class LivingBrain {
   makeNeuron({ name, type, triggers, weight, description, signal, generation = 1 }) {
     const id = `n_${String(this.neurons.size + 1).padStart(3, '0')}`;
     this.totalNeuronsBorn += 1;
-    return { id, born: Date.now(), name, type, triggers, weight, activations: 0, correctPredictions: 0, successfulActivations: 0, connections: [], description, signal, confidence: weight, generation, activationLimit: 6 };
+    return { id, born: Date.now(), name, type, triggers, weight, activations: 0, activationsThreshold: 15, correctPredictions: 0, successfulActivations: 0, connections: [], description, signal, confidence: weight, generation, activationLimit: 6, isTesting: false };
   }
 
   getNeuronWinRate(neuron) {
@@ -313,7 +313,8 @@ class LivingBrain {
         signal: mother.signal,
         description: `Variante de confluencia ${filterType} derivada de ${mother.name}`,
         generation: Math.max(2, (mother.generation || 1) + 1),
-        weight: Math.max(0.55, mother.weight * 0.95)
+        weight: Math.max(0.55, mother.weight * 0.95),
+        isTesting: true
       });
 
       daughter.lineage = {
@@ -459,7 +460,9 @@ class LivingBrain {
       const dynamicLearningRate = neuron.activations > 50 && neuron.weight < 0.4 ? 2 : 1;
       neuron.weight = Math.max(0, neuron.weight - (entropyDecay * dynamicLearningRate));
       neuron.confidence = neuron.weight;
-      if (neuron.generation > 1 && neuron.weight < DEATH_THRESHOLD && !neuron.isProtected) {
+      const activationThreshold = neuron.activationsThreshold ?? 15;
+      const canBePruned = neuron.activations >= activationThreshold;
+      if (neuron.generation > 1 && neuron.weight < DEATH_THRESHOLD && !neuron.isProtected && !neuron.isTesting && canBePruned) {
         this.neurons.delete(id);
         this.totalNeuronsDied += 1;
       }
@@ -483,11 +486,13 @@ class LivingBrain {
     const removableIds = [];
     for (const [id, neuron] of this.neurons.entries()) {
       const winRate = neuron.activations > 0 ? (neuron.correctPredictions / neuron.activations) * 100 : 0;
+      const activationThreshold = neuron.activationsThreshold ?? 15;
+      const canBePruned = neuron.activations >= activationThreshold;
       const lowWinRate = neuron.activations > 50 && winRate < 35;
       const protectedNewGen1 = neuron.generation === 1 && (now - (neuron.born || 0)) < fiveMinutesMs;
-      const lowWeight = neuron.weight < 0.2 && !protectedNewGen1;
+      const lowWeight = neuron.weight < 0.2 && !protectedNewGen1 && canBePruned;
       const isVideoConceptLoser = neuron.name.includes('Concepto video') && avgRulePerformance !== null && winRate < avgRulePerformance;
-      if (neuron.isProtected) continue;
+      if (neuron.isProtected || neuron.isTesting || !canBePruned) continue;
       if (lowWinRate || lowWeight || isVideoConceptLoser) removableIds.push(id);
     }
 
@@ -585,8 +590,43 @@ class LivingBrain {
         neuron.isProtected = true;
       }
     }
+
+    if (Math.max(0, candles.length - 1) >= 1313) {
+      const generationResult = this.finalizeGenerationTest();
+      if (typeof addLog === 'function') {
+        addLog(`🧪 Evaluación diferida completada: ${generationResult.removed} neuronas de prueba no superaron el umbral final.`);
+      }
+    }
+
     const report = this.generateSurvivalReport();
     return { candlesProcessed: Math.max(0, candles.length - 1), wins, losses, activations: wins + losses, report };
+  }
+
+
+  finalizeGenerationTest() {
+    const testingNeurons = Array.from(this.neurons.values()).filter((neuron) => neuron.isTesting);
+    const removable = [];
+
+    testingNeurons.forEach((neuron) => {
+      const winRate = this.getNeuronWinRate(neuron);
+      const failedWinRate = winRate < 55;
+      const failedWeight = neuron.weight < 0.3;
+      if (failedWinRate || failedWeight) removable.push(neuron.id);
+    });
+
+    Array.from(this.neurons.values()).forEach((neuron) => {
+      neuron.isTesting = false;
+    });
+
+    removable.forEach((id) => {
+      if (this.neurons.delete(id)) this.totalNeuronsDied += 1;
+    });
+
+    for (const neuron of this.neurons.values()) {
+      neuron.connections = neuron.connections.filter((conn) => this.neurons.has(this.normalizeConnection(conn).to));
+    }
+
+    return { tested: testingNeurons.length, removed: removable.length };
   }
 
   generateSurvivalReport() {
@@ -763,7 +803,9 @@ class LivingBrain {
   }
 
   autopruning(neuron) {
-    if (!neuron || neuron.type !== 'pattern' || neuron.isProtected || neuron.weight >= 0.1) return false;
+    const activationThreshold = neuron?.activationsThreshold ?? 15;
+    const canBePruned = (neuron?.activations ?? 0) >= activationThreshold;
+    if (!neuron || neuron.type !== 'pattern' || neuron.isProtected || neuron.isTesting || neuron.weight >= 0.1 || !canBePruned) return false;
     if (!this.neurons.delete(neuron.id)) return false;
     this.totalNeuronsDied += 1;
     if (typeof addLog === 'function') addLog('Neurona fallida eliminada por selección natural');
@@ -816,6 +858,7 @@ class LivingBrain {
     neuron.autoPatternSignature = pattern.autoPatternSignature || null;
     neuron.validationStatus = pattern.validationStatus || null;
     neuron.isProtected = Boolean(pattern.isProtected);
+    neuron.isTesting = Boolean(pattern.isTesting || pattern.autoDiscovered);
     this.neurons.set(neuron.id, neuron);
     dispatchEvent(new CustomEvent('neuron:born', { detail: neuron }));
     return neuron;
@@ -968,7 +1011,7 @@ class LivingBrain {
     this.totalNeuronsBorn = state.totalNeuronsBorn || 0;
     this.totalNeuronsDied = state.totalNeuronsDied || 0;
     this.autoPatternCounter = state.autoPatternCounter || 0;
-    this.neurons = new Map((state.neurons || []).map(n => [n.id, { successfulActivations: 0, ...n }]));
+    this.neurons = new Map((state.neurons || []).map(n => [n.id, { successfulActivations: 0, activationsThreshold: 15, isTesting: false, ...n }]));
     if (!this.totalNeuronsBorn) this.totalNeuronsBorn = this.neurons.size;
 
   }
