@@ -201,6 +201,14 @@ class LivingBrain {
     this.consolidationThreshold = 3;
     this.lastActivated = [];
     this.contextHistory = new Map();
+    this.transcriptConceptMap = [
+      { key: 'compradores atrapados', label: 'Compradores Atrapados', type: 'pattern', signal: 'SELL', regex: /compradores? atrapados?|buyers? trapped/i },
+      { key: 'rendicion', label: 'Rendición', type: 'concept', signal: 'SELL', regex: /rendici[oó]n|capitulaci[oó]n/i },
+      { key: 'cambio polaridad', label: 'Cambio de Polaridad', type: 'rule', signal: 'WAIT', regex: /cambio de polaridad|polaridad|flip/i },
+      { key: 'area cara barata', label: 'Área Cara\/Barata', type: 'concept', signal: 'WAIT', regex: /[aá]rea\s+cara|[aá]rea\s+barata|premium|discount/i },
+      { key: 'vela sin mecha', label: 'Vela sin Mecha', type: 'pattern', signal: 'BUY', regex: /vela\s+sin\s+mecha|marubozu|sin mecha/i },
+      { key: 'ruptura', label: 'Ruptura', type: 'rule', signal: 'WAIT', regex: /ruptura|breakout/i }
+    ];
   }
 
   extractFeatures(c) {
@@ -221,30 +229,101 @@ class LivingBrain {
 
   makeNeuron({ name, type, triggers, weight, description, signal, generation = 1 }) {
     const id = `n_${String(this.neurons.size + 1).padStart(3, '0')}`;
-    return { id, born: Date.now(), name, type, triggers, weight, activations: 0, correctPredictions: 0, connections: [], description, signal, confidence: weight, generation };
+    return { id, born: Date.now(), name, type, triggers, weight, activations: 0, correctPredictions: 0, connections: [], description, signal, confidence: weight, generation, activationLimit: 6 };
+  }
+
+  normalizeConnection(conn) {
+    return typeof conn === 'string' ? { to: conn, weight: 0.8, source: 'legacy' } : conn;
+  }
+
+  connectNeurons(fromId, toId, weight = 0.6, meta = {}) {
+    const from = this.neurons.get(fromId);
+    if (!from || !this.neurons.has(toId) || fromId === toId) return false;
+    const existing = from.connections.find((conn) => this.normalizeConnection(conn).to === toId);
+    if (existing) {
+      const normalized = this.normalizeConnection(existing);
+      normalized.weight = Math.max(normalized.weight ?? 0, weight);
+      normalized.source = normalized.source || meta.source || 'manual';
+      if (typeof existing === 'string') {
+        from.connections = from.connections.map((conn) => conn === existing ? normalized : conn);
+      }
+      return false;
+    }
+    from.connections.push({ to: toId, weight, source: meta.source || 'manual', createdAt: Date.now() });
+    return true;
+  }
+
+  simplifyNeuronName(name) {
+    return name
+      .replace(/\s*\(.*?\)/g, '')
+      .split(/\s+/)
+      .slice(0, 3)
+      .join(' ')
+      .trim();
+  }
+
+  getRelevanceMultiplier(neuron) {
+    const strategicPattern = neuron.type === 'pattern' && /atrapados|fuerza/i.test(neuron.name);
+    return strategicPattern ? 1.5 : 1;
+  }
+
+  applyEntropy() {
+    const entropyRate = 0.0005;
+    for (const [id, neuron] of this.neurons.entries()) {
+      neuron.weight = Math.max(0, neuron.weight * (1 - entropyRate));
+      neuron.confidence = neuron.weight;
+      if (neuron.weight < 0.1 && neuron.generation > 1) this.neurons.delete(id);
+    }
+    for (const neuron of this.neurons.values()) {
+      neuron.connections = neuron.connections.filter((conn) => this.neurons.has(this.normalizeConnection(conn).to));
+    }
   }
 
   learnFromTranscript(text) {
-    const lines = text.split(/[.!?\n]/).map(s => s.trim()).filter(Boolean);
-    const verbs = /significa|indica|señal|es alcista|es bajista|cuando|si el precio|buscar entrada|confirma/i;
+    const paragraphs = text.split(/\n\s*\n+/).map((s) => s.trim()).filter(Boolean);
+    const verbs = /significa|indica|señal|es alcista|es bajista|cuando|si el precio|buscar entrada|confirma|atrapados|rendici[oó]n|polaridad|mecha/i;
     let created = 0;
-    lines.forEach((line) => {
-      if (!verbs.test(line)) return;
-      const signal = /sell|bajista/i.test(line) ? 'SELL' : /buy|alcista/i.test(line) ? 'BUY' : 'WAIT';
-      const rsiMatch = line.match(/rsi\s*(?:menor|<)\s*(\d+)|rsi\s*(?:mayor|>)\s*(\d+)/i);
-      const rsi = rsiMatch ? Number(rsiMatch[1] || rsiMatch[2]) : 50;
-      const neuron = this.makeNeuron({
-        name: `Concepto video ${this.neurons.size + 1}`,
-        type: 'concept',
-        triggers: { bodyRatio: { min: 0, max: 0.45 }, trend: signal === 'BUY' ? 'bullish' : signal === 'SELL' ? 'bearish' : 'neutral', rsiRange: { min: Math.max(0, rsi - 12), max: Math.min(100, rsi + 12) } },
-        weight: 0.5,
-        description: line,
-        signal
+    paragraphs.forEach((paragraph) => {
+      if (!verbs.test(paragraph)) return;
+      const lines = paragraph.split(/[.!?\n]/).map((s) => s.trim()).filter(Boolean);
+      const paragraphNeurons = [];
+      lines.forEach((line) => {
+        const signal = /sell|bajista/i.test(line) ? 'SELL' : /buy|alcista/i.test(line) ? 'BUY' : 'WAIT';
+        const concepts = this.transcriptConceptMap.filter(({ regex }) => regex.test(line));
+        const rsiMatch = line.match(/rsi\s*(?:menor|<)\s*(\d+)|rsi\s*(?:mayor|>)\s*(\d+)/i);
+        const rsi = rsiMatch ? Number(rsiMatch[1] || rsiMatch[2]) : 50;
+        if (!concepts.length) concepts.push({ label: `Concepto video ${this.neurons.size + 1}`, type: 'concept', signal, key: 'generic' });
+
+        concepts.forEach((concept) => {
+          const neuron = this.makeNeuron({
+            name: concept.label,
+            type: concept.type || 'concept',
+            triggers: { bodyRatio: { min: 0, max: 0.45 }, trend: (concept.signal || signal) === 'BUY' ? 'bullish' : (concept.signal || signal) === 'SELL' ? 'bearish' : 'neutral', rsiRange: { min: Math.max(0, rsi - 12), max: Math.min(100, rsi + 12) } },
+            weight: concept.key === 'generic' ? 0.5 : 0.62,
+            description: line,
+            signal: concept.signal || signal
+          });
+          neuron.source = 'video';
+          neuron.conceptKey = concept.key;
+          this.neurons.set(neuron.id, neuron);
+          paragraphNeurons.push(neuron);
+          dispatchEvent(new CustomEvent('neuron:born', { detail: neuron }));
+          created += 1;
+        });
       });
-      neuron.source = 'video';
-      this.neurons.set(neuron.id, neuron);
-      dispatchEvent(new CustomEvent('neuron:born', { detail: neuron }));
-      created += 1;
+
+      for (let i = 0; i < paragraphNeurons.length - 1; i++) {
+        const source = paragraphNeurons[i];
+        const target = paragraphNeurons[i + 1];
+        const semanticPair = /ruptura|cambio polaridad|rendicion|compradores atrapados|vela sin mecha/i;
+        if (semanticPair.test(`${source.conceptKey} ${target.conceptKey}`)) {
+          this.connectNeurons(source.id, target.id, 0.6, { source: 'transcript' });
+        }
+      }
+
+      const rupture = paragraphNeurons.find((n) => /ruptura/i.test(n.conceptKey || ''));
+      const surrender = paragraphNeurons.find((n) => /rendicion/i.test(n.conceptKey || ''));
+      if (rupture && surrender) this.connectNeurons(rupture.id, surrender.id, 0.6, { source: 'transcript' });
     });
     return created;
   }
@@ -329,15 +408,22 @@ class LivingBrain {
 
   evolveNeurons() {
     const daughters = [];
+    this.applyEntropy();
     for (const neuron of this.neurons.values()) {
-      if (neuron.weight > 0.88 && neuron.activations > 5 && neuron.generation < 3) {
+      const relevanceMultiplier = this.getRelevanceMultiplier(neuron);
+      const activationLimit = neuron.activationLimit || 6;
+      const activationRatio = Math.min(1, neuron.activations / activationLimit);
+      const reproductionChance = ((neuron.weight * 0.55) + (activationRatio * 0.45)) * 0.4 * relevanceMultiplier;
+      if (neuron.weight > 0.65 && neuron.generation < 3 && Math.random() < reproductionChance) {
         const daughter = this.birthNeuron({
           features: { ...neuron.triggers, trend: neuron.triggers.trend === 'bullish' ? 'bullish' : neuron.triggers.trend === 'bearish' ? 'bearish' : 'neutral' },
           signal: neuron.signal,
           description: `Meta-neurona derivada de ${neuron.name}`,
           generation: neuron.generation + 1
         });
-        neuron.connections.push(daughter.id);
+        daughter.name = `${this.simplifyNeuronName(neuron.name)} G${daughter.generation}`;
+        daughter.activationLimit = activationLimit + 2;
+        this.connectNeurons(neuron.id, daughter.id, 0.7, { source: 'evolution' });
         daughter.type = 'meta';
         daughter.weight = Math.min(1, neuron.weight - 0.05);
         daughters.push(daughter.id);
@@ -391,9 +477,10 @@ class LivingBrain {
         neuron.activations += 1;
         activated.push({ neuron, score });
         (this.contextHistory.get(neuron.id) || this.contextHistory.set(neuron.id, []).get(neuron.id)).push(features.trend);
-        neuron.connections.forEach((connId) => {
+        neuron.connections.forEach((rawConn) => {
+          const { to: connId, weight: connWeight = 0.8 } = this.normalizeConnection(rawConn);
           const conn = this.neurons.get(connId);
-          if (conn) activated.push({ neuron: conn, score: score * 0.8, chained: true, from: neuron.id, to: connId });
+          if (conn) activated.push({ neuron: conn, score: score * connWeight, chained: true, from: neuron.id, to: connId });
         });
       }
     }
@@ -432,7 +519,10 @@ class LivingBrain {
   getGraphData() {
     return {
       nodes: Array.from(this.neurons.values()),
-      edges: Array.from(this.neurons.values()).flatMap(n => n.connections.map(to => ({ from: n.id, to })))
+      edges: Array.from(this.neurons.values()).flatMap((n) => n.connections.map((conn) => {
+        const normalized = this.normalizeConnection(conn);
+        return { from: n.id, to: normalized.to, weight: normalized.weight, source: normalized.source };
+      }))
     };
   }
 }
@@ -509,7 +599,12 @@ function drawGraph(now) {
 
   data.edges.forEach((e) => {
     const a = nodesSim.get(e.from), b = nodesSim.get(e.to); if (!a || !b) return;
-    ctx.strokeStyle = 'rgba(255,255,255,0.04)'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    const origin = brain.neurons.get(e.from);
+    const connFiringColor = getComputedStyle(document.documentElement).getPropertyValue('--conn-firing').trim() || 'rgba(0,229,160,0.7)';
+    const isTranscriptHot = e.source === 'transcript' && (origin?.weight ?? 0) > 0.78;
+    ctx.strokeStyle = isTranscriptHot ? connFiringColor : 'rgba(255,255,255,0.04)';
+    ctx.lineWidth = isTranscriptHot ? 1.4 : 0.5;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
   });
 
   brain.lastActivated.filter(x => x.chained).forEach((a) => {
