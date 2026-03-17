@@ -78,6 +78,9 @@
     .btn-ghost:hover { border-color: var(--border-medium); color: var(--text-primary); background: var(--bg-lift); }
     .btn-warning { background: rgba(255, 71, 87, 0.15); color: #ff9ca5; border-color: rgba(255, 71, 87, 0.35); }
     .btn-warning:hover { background: rgba(255, 71, 87, 0.25); color: #ffd6da; border-color: rgba(255, 71, 87, 0.55); }
+    .mode-controls { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+    .mode-btn { background: transparent; color: var(--text-secondary); border: 1px solid var(--border-subtle); border-radius: 999px; padding: 7px 12px; font-size: 12px; cursor: pointer; }
+    .mode-btn.active { background: rgba(29, 181, 132, 0.2); color: var(--text-primary); border-color: rgba(29, 181, 132, 0.6); }
 
     .health-grid { display:grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap:8px; margin-top:10px; }
     .health-card { padding:10px; border:1px solid var(--border-faint); border-radius:8px; background: var(--bg-surface); }
@@ -126,6 +129,12 @@
         <button class="btn-ghost" id="btnExportPro">📥 Exportar Patrones Pro</button>
         <button class="btn-ghost btn-warning" id="btnPruneNoise">🧹 Purgar Ruido</button>
       </div>
+      <div class="mode-controls" id="testModeControls">
+        <button class="mode-btn" data-test-mode="discovery">Fase 1: Descubrimiento</button>
+        <button class="mode-btn" data-test-mode="validation">Fase 2: Validación</button>
+        <button class="mode-btn" data-test-mode="selection">Fase 3: Selección</button>
+      </div>
+      <div class="text-sm" id="testModeHint">Modo actual: —</div>
     </header>
 
     <nav class="tabs" id="tabs">
@@ -247,6 +256,89 @@ class LivingBrain {
     this.superNeuronThreshold = 60;
     this.superNeuronMinDaughters = 3;
     this.criticalPopulationNotified = false;
+    this.testMode = 'discovery';
+    this.testModes = {
+      discovery: {
+        key: 'discovery',
+        label: 'Fase 1: Descubrimiento',
+        autoLearn: true,
+        entropyEnabled: false,
+        deathThreshold: 0.25,
+        winRateTracking: false,
+        fusionEnabled: false
+      },
+      validation: {
+        key: 'validation',
+        label: 'Fase 2: Validación',
+        autoLearn: false,
+        entropyEnabled: true,
+        deathThreshold: 0.05,
+        winRateTracking: true,
+        fusionEnabled: false
+      },
+      selection: {
+        key: 'selection',
+        label: 'Fase 3: Selección',
+        autoLearn: false,
+        entropyEnabled: true,
+        deathThreshold: 0.3,
+        winRateTracking: false,
+        fusionEnabled: true
+      }
+    };
+  }
+
+  getModeConfig(mode = this.testMode) {
+    return this.testModes[mode] || this.testModes.discovery;
+  }
+
+  setTestMode(mode) {
+    const nextMode = this.testModes[mode] ? mode : 'discovery';
+    const previousMode = this.testMode;
+    this.testMode = nextMode;
+
+    if (nextMode === 'validation' && previousMode !== 'validation') this.resetWinRateTracking();
+
+    return this.getModeConfig();
+  }
+
+  resetWinRateTracking() {
+    for (const neuron of this.neurons.values()) {
+      neuron.activations = 0;
+      neuron.correctPredictions = 0;
+      neuron.successfulActivations = 0;
+      neuron.recentOutcomes = [];
+    }
+    this.performanceHistory = [];
+  }
+
+  fuseEliteNeurons() {
+    const eligible = Array.from(this.neurons.values())
+      .filter((neuron) => ['pattern', 'rule'].includes(neuron.type) && neuron.weight >= 0.75 && neuron.activations >= 20)
+      .sort((a, b) => b.weight - a.weight);
+
+    if (eligible.length < 2) return { created: 0, used: 0 };
+
+    const pair = eligible.slice(0, 2);
+    const [a, b] = pair;
+    const mergedTriggers = { ...a.triggers, ...b.triggers };
+    const superNeuron = this.makeNeuron({
+      name: `Súper Neurona ${this.simplifyNeuronName(a.name)} + ${this.simplifyNeuronName(b.name)}`,
+      type: 'super',
+      triggers: mergedTriggers,
+      weight: Math.min(1, ((a.weight || 0.7) + (b.weight || 0.7)) / 2 + 0.1),
+      description: `Fusión elite de ${a.name} y ${b.name}`,
+      signal: a.signal === b.signal ? a.signal : 'WAIT',
+      generation: Math.max(a.generation || 1, b.generation || 1) + 1
+    });
+
+    superNeuron.isSuper = true;
+    superNeuron.isProtected = true;
+    this.neurons.set(superNeuron.id, superNeuron);
+    this.connectNeurons(a.id, superNeuron.id, 0.85, { source: 'fusion' });
+    this.connectNeurons(b.id, superNeuron.id, 0.85, { source: 'fusion' });
+    dispatchEvent(new CustomEvent('neuron:born', { detail: superNeuron }));
+    return { created: 1, used: pair.length };
   }
 
   promoteMasterNeuron(neuron) {
@@ -571,9 +663,10 @@ class LivingBrain {
   }
 
   applyEntropy() {
-    if (this.shouldSuspendPruning()) return;
+    const modeConfig = this.getModeConfig();
+    if (!modeConfig.entropyEnabled || this.shouldSuspendPruning()) return;
     const entropyDecay = 0.005;
-    const DEATH_THRESHOLD = 0.25;
+    const DEATH_THRESHOLD = modeConfig.deathThreshold;
     for (const [id, neuron] of this.neurons.entries()) {
       const dynamicLearningRate = neuron.activations > 50 && neuron.weight < 0.4 ? 2 : 1;
       neuron.weight = this.clampNeuronWeight(neuron, neuron.weight - (entropyDecay * dynamicLearningRate));
@@ -592,7 +685,9 @@ class LivingBrain {
   }
 
   pruneNoise() {
+    const modeConfig = this.getModeConfig();
     if (this.shouldSuspendPruning()) return 0;
+    if (modeConfig.deathThreshold <= 0.05) return 0;
     const now = Date.now();
     const fiveMinutesMs = 5 * 60 * 1000;
     const ruleNeurons = Array.from(this.neurons.values()).filter((neuron) => neuron.type === 'rule');
@@ -610,7 +705,7 @@ class LivingBrain {
       const canBePruned = neuron.activations >= activationThreshold;
       const lowWinRate = neuron.activations > 50 && winRate < 35;
       const protectedNewGen1 = neuron.generation === 1 && (now - (neuron.born || 0)) < fiveMinutesMs;
-      const lowWeight = neuron.weight < 0.2 && !protectedNewGen1 && canBePruned;
+      const lowWeight = neuron.weight < modeConfig.deathThreshold && !protectedNewGen1 && canBePruned;
       const isVideoConceptLoser = neuron.name.includes('Concepto video') && avgRulePerformance !== null && winRate < avgRulePerformance;
       if (neuron.isProtected || neuron.isTesting || neuron.isMaster || !canBePruned) continue;
       if (lowWinRate || lowWeight || isVideoConceptLoser) removableIds.push(id);
@@ -696,13 +791,17 @@ class LivingBrain {
       }
     }
 
+    let fusionSummary = null;
+    if (this.getModeConfig().fusionEnabled) fusionSummary = this.fuseEliteNeurons();
+
     const report = this.generateSurvivalReport();
     if (typeof saveState === 'function') await saveState('backtest');
-    return { candlesProcessed: Math.max(0, candles.length - 1), wins, losses, activations: wins + losses, report };
+    return { candlesProcessed: Math.max(0, candles.length - 1), wins, losses, activations: wins + losses, report, fusionSummary };
   }
 
 
   finalizeGenerationTest() {
+    const modeConfig = this.getModeConfig();
     const testingNeurons = Array.from(this.neurons.values()).filter((neuron) => neuron.isTesting);
     const removable = [];
 
@@ -710,7 +809,7 @@ class LivingBrain {
       const winRate = this.getNeuronWinRate(neuron);
       const failedWinRate = winRate < 55;
       const failedWeight = neuron.weight < 0.3;
-      if ((failedWinRate || failedWeight) && !neuron.isMaster) removable.push(neuron.id);
+      if ((failedWinRate || failedWeight) && !neuron.isMaster && modeConfig.deathThreshold > 0.05) removable.push(neuron.id);
     });
 
     Array.from(this.neurons.values()).forEach((neuron) => {
@@ -901,9 +1000,11 @@ class LivingBrain {
   }
 
   autopruning(neuron) {
+    const modeConfig = this.getModeConfig();
     const activationThreshold = neuron?.activationsThreshold ?? 15;
     const canBePruned = (neuron?.activations ?? 0) >= activationThreshold;
-    if (!neuron || neuron.type !== 'pattern' || neuron.isProtected || neuron.isTesting || neuron.isMaster || neuron.weight >= 0.1 || !canBePruned) return false;
+    if (!neuron || neuron.type !== 'pattern' || neuron.isProtected || neuron.isTesting || neuron.isMaster || neuron.weight >= modeConfig.deathThreshold || !canBePruned) return false;
+    if (modeConfig.deathThreshold <= 0.05) return false;
     if (this.shouldSuspendPruning()) return false;
     if (!this.neurons.delete(neuron.id)) return false;
     this.totalNeuronsDied += 1;
@@ -916,6 +1017,7 @@ class LivingBrain {
   }
 
   checkForNewNeurons() {
+    if (!this.getModeConfig().autoLearn) return { autoLearnDisabled: true, pending: this.pendingPatterns.length };
     const groups = new Map();
     this.pendingPatterns.forEach((p) => {
       const signature = `${p.features.trend}|${p.features.bodyRatio.toFixed(2)}|${p.features.wickLower.toFixed(2)}`;
@@ -1103,6 +1205,7 @@ class LivingBrain {
       totalNeuronsBorn: this.totalNeuronsBorn,
       totalNeuronsDied: this.totalNeuronsDied,
       autoPatternCounter: this.autoPatternCounter,
+      testMode: this.testMode,
       neurons: Array.from(this.neurons.values()),
       performanceHistory: this.performanceHistory.slice(-1313)
     };
@@ -1116,6 +1219,7 @@ class LivingBrain {
     this.totalNeuronsBorn = state.totalNeuronsBorn || 0;
     this.totalNeuronsDied = state.totalNeuronsDied || 0;
     this.autoPatternCounter = state.autoPatternCounter || 0;
+    this.testMode = this.testModes[state.testMode] ? state.testMode : 'discovery';
     this.performanceHistory = (state.performanceHistory || []).slice(-1313);
     this.neurons = new Map((state.neurons || []).map(n => [n.id, { successfulActivations: 0, activationsThreshold: 15, isTesting: false, ...n }]));
     for (const neuron of this.neurons.values()) this.promoteMasterNeuron(neuron);
@@ -1384,6 +1488,15 @@ function addLogEntries(lines = []) {
   for (let i = lines.length - 1; i >= 0; i--) addLog(lines[i]);
 }
 
+function renderTestMode() {
+  const mode = brain.getModeConfig();
+  const hint = document.getElementById('testModeHint');
+  if (hint) hint.textContent = `Modo actual: ${mode.label} · autoLearn:${mode.autoLearn ? 'ON' : 'OFF'} · entropy:${mode.entropyEnabled ? 'ON' : 'OFF'} · deathThreshold:${mode.deathThreshold}`;
+  document.querySelectorAll('[data-test-mode]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.testMode === brain.testMode);
+  });
+}
+
 function renderStats() {
   const health = brain.getHealthSnapshot();
   document.getElementById('statNeurons').textContent = brain.neurons.size;
@@ -1393,6 +1506,7 @@ function renderStats() {
   document.getElementById('healthAlive').textContent = health.alive;
   document.getElementById('healthAvgWeight').textContent = health.avgWeight.toFixed(3);
   document.getElementById('healthSurvival').textContent = `${Math.round(health.survivalRate)}%`;
+  renderTestMode();
 }
 
 function renderNeuronsList() {
@@ -1490,6 +1604,7 @@ document.getElementById('btnBacktest').onclick = async () => {
 
     const result = await brain.runBacktest(candles);
     addLog(`Backtest finalizado en ${result.candlesProcessed} velas. Activaciones:${result.activations} WIN:${result.wins} LOSS:${result.losses}.`);
+    if (result.fusionSummary?.created) addLog(`🧬 Fusión completada: ${result.fusionSummary.created} Súper Neurona creada.`);
     addLogEntries(result.report?.lines || []);
     renderStats();
     renderNeuronsList();
@@ -1559,6 +1674,15 @@ addEventListener('backtest:tick', (event) => {
   renderNeuronsList();
 });
 
+document.getElementById('testModeControls').onclick = async (e) => {
+  const btn = e.target.closest('[data-test-mode]');
+  if (!btn) return;
+  const mode = brain.setTestMode(btn.dataset.testMode);
+  addLog(`Modo de test actualizado: ${mode.label}.`);
+  renderTestMode();
+  await saveState('mode');
+};
+
 document.getElementById('tabs').onclick = (e) => {
   const btn = e.target.closest('.tab');
   if (!btn) return;
@@ -1593,6 +1717,7 @@ async function initializeApp() {
   renderStats();
   renderNeuronsList();
   addLog('Living Brain inicializado. Estado cargado desde IndexedDB.');
+  addLog(`Modo inicial: ${brain.getModeConfig().label}.`);
   requestAnimationFrame(frame);
 }
 
