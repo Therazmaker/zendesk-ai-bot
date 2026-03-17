@@ -120,6 +120,7 @@
         <div class="stat"><div class="text-label">Gen</div><div class="text-stat" id="statGen">1</div></div>
         <div class="stat"><div class="text-label">Velas vistas</div><div class="text-stat" id="statObs">0</div></div>
         <div class="stat"><div class="text-label">Salud cerebro</div><div class="text-stat" id="statHealth">0%</div></div>
+        <button class="btn-ghost" id="btnSurvivalReport">Ver Reporte Detallado</button>
       </div>
     </header>
 
@@ -415,7 +416,50 @@ class LivingBrain {
     }
 
     this.backtestCycles += 1;
-    return { candlesProcessed: Math.max(0, candles.length - 1), wins, losses, activations: wins + losses };
+    const report = this.generateSurvivalReport();
+    return { candlesProcessed: Math.max(0, candles.length - 1), wins, losses, activations: wins + losses, report };
+  }
+
+  generateSurvivalReport() {
+    const neurons = Array.from(this.neurons.values());
+    const ranked = neurons
+      .filter((neuron) => neuron.activations > 10)
+      .map((neuron) => ({
+        ...neuron,
+        winRate: neuron.activations ? (neuron.correctPredictions / neuron.activations) * 100 : 0
+      }))
+      .sort((a, b) => b.winRate - a.winRate);
+
+    const grouped = ['concept', 'rule', 'pattern'].map((type) => {
+      const group = neurons.filter((neuron) => neuron.type === type);
+      const avgWeight = group.length ? group.reduce((acc, neuron) => acc + neuron.weight, 0) / group.length : 0;
+      return { type, count: group.length, avgWeight };
+    });
+
+    const falseProphets = ranked.filter((neuron) => neuron.activations > 50 && neuron.winRate < 35);
+    const topWinners = ranked.slice(0, 3);
+
+    const lines = [
+      '🧠 ===== REPORTE DE RENDIMIENTO NEURONAL =====',
+      `📊 Neuronas analizadas (act > 10): ${ranked.length}`,
+      topWinners.length
+        ? `🏆 TOP neuronas: ${topWinners.map((n, idx) => `${idx + 1}. \"${n.name}\" (${n.type}) ${n.winRate.toFixed(1)}%`).join(' | ')}`
+        : '🏆 TOP neuronas: Aún no hay suficientes activaciones para ranking.',
+      ...ranked.slice(0, 10).map((neuron) => {
+        const icon = neuron.winRate >= 60 ? '🏆 MVP' : neuron.winRate >= 35 ? '⚠️ Dudosa' : '💀 Eliminar';
+        const note = neuron.winRate >= 60 ? 'Dale más importancia.' : neuron.winRate >= 35 ? 'Aún está aprendiendo.' : 'Ruido potencial para esta temporalidad.';
+        return `${icon}: \"${neuron.name}\" (${neuron.type}) -> Win Rate ${neuron.winRate.toFixed(1)}% · act:${neuron.activations}. ${note}`;
+      }),
+      '🧬 Peso promedio por tipo:',
+      ...grouped.map((group) => `${group.count ? '✅' : '⚪'} ${group.type}: ${group.avgWeight.toFixed(3)} (${group.count} neuronas)`),
+      falseProphets.length
+        ? `💀 Ruido de Mercado detectado: ${falseProphets.map((n) => `\"${n.name}\" ${n.winRate.toFixed(1)}%/${n.activations} act`).join(' | ')}`
+        : '✅ Sin Falsos Profetas activos (act > 50 y win rate < 35%).',
+      '🧠 ==========================================='
+    ];
+
+    console.log(lines.join('\n'));
+    return { lines, ranked, grouped, falseProphets };
   }
 
   parseMarketData(raw, fileType = 'json') {
@@ -851,6 +895,10 @@ function addLog(text) {
   log.prepend(line);
 }
 
+function addLogEntries(lines = []) {
+  for (let i = lines.length - 1; i >= 0; i--) addLog(lines[i]);
+}
+
 function renderStats() {
   const health = brain.getHealthSnapshot();
   document.getElementById('statNeurons').textContent = brain.neurons.size;
@@ -957,6 +1005,7 @@ document.getElementById('btnBacktest').onclick = async () => {
 
     const result = await brain.runBacktest(candles);
     addLog(`Backtest finalizado en ${result.candlesProcessed} velas. Activaciones:${result.activations} WIN:${result.wins} LOSS:${result.losses}.`);
+    addLogEntries(result.report?.lines || []);
     renderStats();
     renderNeuronsList();
     saveState();
@@ -978,6 +1027,10 @@ document.getElementById('btnObserve').onclick = () => {
 document.getElementById('btnWin').onclick = () => { brain.receiveOutcome('WIN'); addLog('Feedback WIN recibido. Pesos reforzados.'); renderNeuronsList(); saveState(); };
 document.getElementById('btnLoss').onclick = () => { brain.receiveOutcome('LOSS'); addLog('Feedback LOSS recibido. Pesos reducidos.'); renderNeuronsList(); saveState(); };
 document.getElementById('btnEvolve').onclick = () => { const d = brain.evolveNeurons(); addLog(`Evolución ejecutada. Hijas creadas: ${d.length}.`); renderStats(); renderNeuronsList(); saveState(); };
+document.getElementById('btnSurvivalReport').onclick = () => {
+  const report = brain.generateSurvivalReport();
+  addLogEntries(report.lines);
+};
 
 
 addEventListener('backtest:tick', (event) => {
