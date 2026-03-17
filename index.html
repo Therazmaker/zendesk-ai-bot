@@ -281,7 +281,7 @@ class LivingBrain {
         label: 'Fase 3: Selección',
         autoLearn: false,
         entropyEnabled: true,
-        deathThreshold: 0.3,
+        deathThreshold: 0.4,
         winRateTracking: false,
         fusionEnabled: true
       }
@@ -298,6 +298,7 @@ class LivingBrain {
     this.testMode = nextMode;
 
     if (nextMode === 'validation' && previousMode !== 'validation') this.resetWinRateTracking();
+    if (nextMode === 'selection' && previousMode !== 'selection') this.pendingPatterns = [];
 
     return this.getModeConfig();
   }
@@ -312,33 +313,87 @@ class LivingBrain {
     this.performanceHistory = [];
   }
 
-  fuseEliteNeurons() {
-    const eligible = Array.from(this.neurons.values())
-      .filter((neuron) => ['pattern', 'rule'].includes(neuron.type) && neuron.weight >= 0.75 && neuron.activations >= 20)
-      .sort((a, b) => b.weight - a.weight);
+  normalizeNeuronBaseName(name = '') {
+    return String(name || '')
+      .toLowerCase()
+      .replace(/s[uú]per neurona\s*/gi, '')
+      .replace(/especializaci[oó]n\s*/gi, '')
+      .replace(/\s*#\d+/g, '')
+      .replace(/\s*\([^)]*\)/g, '')
+      .replace(/[+|].*$/g, '')
+      .trim();
+  }
 
-    if (eligible.length < 2) return { created: 0, used: 0 };
+  mergeTriggersWithAnd(triggersList = []) {
+    const merged = {};
+    for (const triggers of triggersList) {
+      if (!triggers || typeof triggers !== 'object') continue;
+      if (triggers.bodyRatio) merged.bodyRatio = this.mergeRangeFilter(merged.bodyRatio, triggers.bodyRatio);
+      if (triggers.wickLower) {
+        merged.wickLower = {
+          min: Math.max(merged.wickLower?.min ?? 0, triggers.wickLower.min ?? 0),
+          max: Math.min(merged.wickLower?.max ?? Number.POSITIVE_INFINITY, triggers.wickLower.max ?? Number.POSITIVE_INFINITY)
+        };
+      }
+      if (triggers.rsiRange) merged.rsiRange = this.mergeRangeFilter(merged.rsiRange, triggers.rsiRange);
+      if (triggers.stochasticRange) merged.stochasticRange = this.mergeRangeFilter(merged.stochasticRange, triggers.stochasticRange);
+      if (triggers.trend) {
+        if (!merged.trend) merged.trend = triggers.trend;
+        else if (merged.trend !== triggers.trend) return null;
+      }
+      if (triggers.emaBias) {
+        if (!merged.emaBias) merged.emaBias = triggers.emaBias;
+        else if (merged.emaBias !== triggers.emaBias) return null;
+      }
+    }
+    return merged;
+  }
 
-    const pair = eligible.slice(0, 2);
-    const [a, b] = pair;
-    const mergedTriggers = { ...a.triggers, ...b.triggers };
-    const superNeuron = this.makeNeuron({
-      name: `Súper Neurona ${this.simplifyNeuronName(a.name)} + ${this.simplifyNeuronName(b.name)}`,
-      type: 'super',
-      triggers: mergedTriggers,
-      weight: Math.min(1, ((a.weight || 0.7) + (b.weight || 0.7)) / 2 + 0.1),
-      description: `Fusión elite de ${a.name} y ${b.name}`,
-      signal: a.signal === b.signal ? a.signal : 'WAIT',
-      generation: Math.max(a.generation || 1, b.generation || 1) + 1
+  mergeEliteNeurons() {
+    const elite = Array.from(this.neurons.values()).filter((neuron) => ['pattern', 'rule'].includes(neuron.type) && neuron.weight > 0.7);
+    const groups = new Map();
+
+    elite.forEach((neuron) => {
+      const base = this.normalizeNeuronBaseName(neuron.name);
+      if (!base) return;
+      if (!groups.has(base)) groups.set(base, []);
+      groups.get(base).push(neuron);
     });
 
-    superNeuron.isSuper = true;
-    superNeuron.isProtected = true;
-    this.neurons.set(superNeuron.id, superNeuron);
-    this.connectNeurons(a.id, superNeuron.id, 0.85, { source: 'fusion' });
-    this.connectNeurons(b.id, superNeuron.id, 0.85, { source: 'fusion' });
-    dispatchEvent(new CustomEvent('neuron:born', { detail: superNeuron }));
-    return { created: 1, used: pair.length };
+    let created = 0;
+    let removed = 0;
+
+    for (const [base, neurons] of groups.entries()) {
+      if (neurons.length < 2) continue;
+      const mergedTriggers = this.mergeTriggersWithAnd(neurons.map((n) => n.triggers));
+      if (!mergedTriggers || !Object.keys(mergedTriggers).length) continue;
+
+      const superNeuron = this.makeNeuron({
+        name: `Súper Neurona ${this.simplifyNeuronName(base)}`,
+        type: 'super',
+        triggers: mergedTriggers,
+        weight: Math.min(1, neurons.reduce((acc, neuron) => acc + neuron.weight, 0) / neurons.length + 0.08),
+        description: `Fusión AND de ${neurons.map((neuron) => neuron.name).join(' + ')}`,
+        signal: neurons.every((neuron) => neuron.signal === neurons[0].signal) ? neurons[0].signal : 'WAIT',
+        generation: Math.max(...neurons.map((neuron) => neuron.generation || 1)) + 1
+      });
+
+      superNeuron.isSuper = true;
+      superNeuron.isProtected = true;
+      this.neurons.set(superNeuron.id, superNeuron);
+      dispatchEvent(new CustomEvent('neuron:born', { detail: superNeuron }));
+      created += 1;
+
+      for (const neuron of neurons) {
+        if (this.neurons.delete(neuron.id)) removed += 1;
+      }
+    }
+
+    for (const neuron of this.neurons.values()) {
+      neuron.connections = neuron.connections.filter((conn) => this.neurons.has(this.normalizeConnection(conn).to));
+    }
+
+    return { created, removed };
   }
 
   promoteMasterNeuron(neuron) {
@@ -791,12 +846,34 @@ class LivingBrain {
       }
     }
 
+    let hardPruneSummary = null;
+    if (this.testMode === 'selection') hardPruneSummary = this.pruneByBacktestWinRate(55);
+
     let fusionSummary = null;
-    if (this.getModeConfig().fusionEnabled) fusionSummary = this.fuseEliteNeurons();
+    if (this.testMode === 'selection' && this.getModeConfig().fusionEnabled) fusionSummary = this.mergeEliteNeurons();
 
     const report = this.generateSurvivalReport();
     if (typeof saveState === 'function') await saveState('backtest');
-    return { candlesProcessed: Math.max(0, candles.length - 1), wins, losses, activations: wins + losses, report, fusionSummary };
+    return { candlesProcessed: Math.max(0, candles.length - 1), wins, losses, activations: wins + losses, report, fusionSummary, hardPruneSummary };
+  }
+
+  pruneByBacktestWinRate(minWinRate = 55) {
+    const removable = [];
+
+    for (const neuron of this.neurons.values()) {
+      const winRate = this.getNeuronWinRate(neuron);
+      if (winRate < minWinRate && !neuron.isMaster) removable.push(neuron.id);
+    }
+
+    removable.forEach((id) => {
+      if (this.neurons.delete(id)) this.totalNeuronsDied += 1;
+    });
+
+    for (const neuron of this.neurons.values()) {
+      neuron.connections = neuron.connections.filter((conn) => this.neurons.has(this.normalizeConnection(conn).to));
+    }
+
+    return { minWinRate, removed: removable.length };
   }
 
 
@@ -1017,6 +1094,7 @@ class LivingBrain {
   }
 
   checkForNewNeurons() {
+    if (['validation', 'selection'].includes(this.testMode)) return;
     if (!this.getModeConfig().autoLearn) return { autoLearnDisabled: true, pending: this.pendingPatterns.length };
     const groups = new Map();
     this.pendingPatterns.forEach((p) => {
