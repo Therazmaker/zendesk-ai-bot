@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trading Brain</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;500;700&display=swap');
+
+    :root {
+      --bg-base: #0a0a0a;
+      --bg-surface: #111113;
+      --bg-card: #17171a;
+      --bg-hover: #1e1e22;
+      --accent-green: #1D9E75;
+      --accent-red: #D85A30;
+      --accent-amber: #BA7517;
+      --accent-purple: #7F77DD;
+      --accent-blue: #3B8BD4;
+      --text-primary: #e8e6df;
+      --text-secondary: #8a8880;
+      --text-tertiary: #4a4845;
+      --border-subtle: rgba(255,255,255,0.06);
+      --border-medium: rgba(255,255,255,0.12);
+      --border-strong: rgba(255,255,255,0.22);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      font-family: 'Syne', sans-serif;
+      min-height: 100vh;
+    }
+
+    .mono, canvas, .log-container, .val, .prob-fill, .signal-text, .concept-tag { font-family: 'JetBrains Mono', monospace; }
+
+    .app-header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 0 24px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      backdrop-filter: blur(12px);
+      background: rgba(10,10,10,0.85);
+    }
+
+    .title { font-size: 17px; font-weight: 700; letter-spacing: .05em; }
+    .subtitle { color: var(--text-secondary); font-size: 12px; }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      background: var(--border-subtle);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      overflow: hidden;
+      margin: 16px 24px;
+    }
+    .stat-card { background: var(--bg-card); padding: 16px 20px; }
+    .stat-card .val { font-size: 28px; font-weight: 700; line-height: 1; }
+    .stat-card .lbl { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-tertiary); margin-top: 6px; }
+
+    .tab-bar {
+      display: flex;
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 0 24px;
+    }
+    .tab {
+      padding: 12px 20px;
+      font-size: 13px;
+      cursor: pointer;
+      color: var(--text-secondary);
+      border-bottom: 2px solid transparent;
+      transition: color .15s, border-color .15s;
+      position: relative;
+      top: 1px;
+      user-select: none;
+    }
+    .tab:hover { color: var(--text-primary); }
+    .tab.active { color: var(--text-primary); border-bottom-color: var(--accent-green); font-weight: 500; }
+
+    .panel-wrap { padding: 16px 24px 24px; }
+    .panel { display: none; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 10px; padding: 16px; }
+    .panel.active { display: block; animation: fadeSlideIn .2s ease-out; }
+    @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(200px,1fr)); gap: 12px; }
+    .form-grid { display: grid; grid-template-columns: repeat(3, minmax(140px,1fr)); gap: 10px; }
+
+    input, select, textarea {
+      width: 100%;
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-size: 13px;
+      padding: 7px 10px;
+      outline: none;
+      font-family: 'Syne', sans-serif;
+      transition: border-color .15s;
+    }
+    textarea { min-height: 140px; resize: vertical; }
+    input:focus, select:focus, textarea:focus { border-color: var(--border-strong); }
+    input:hover, select:hover, textarea:hover { border-color: var(--border-medium); }
+
+    .btn-primary {
+      background: var(--accent-green);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 18px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: 'Syne', sans-serif;
+      transition: opacity .15s, transform .1s;
+    }
+    .btn-primary:hover { opacity: .88; }
+    .btn-primary:active { transform: scale(0.97); }
+    .btn-primary.loading { opacity: .6; pointer-events: none; }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid var(--border-medium);
+      border-radius: 6px;
+      padding: 8px 18px;
+      font-size: 13px;
+      cursor: pointer;
+      font-family: 'Syne', sans-serif;
+      transition: all .15s;
+    }
+    .btn-ghost:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+    .controls { display:flex; gap:10px; margin-top: 12px; }
+    .section { margin-bottom: 14px; }
+    .label-section { font-size:10px; letter-spacing:.12em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom:6px; }
+
+    #nnCanvas { width: 100%; height: 380px; border: 1px solid var(--border-subtle); border-radius: 8px; background: #0d0d10; transition: opacity .3s; }
+
+    .tags { display: flex; flex-wrap: wrap; min-height: 34px; }
+    .concept-tag {
+      display:inline-flex; align-items:center; gap:4px; font-size:11px; padding:3px 10px; border-radius:20px; margin:3px;
+      background: rgba(59,139,212,.12); color: var(--accent-blue); border:1px solid rgba(59,139,212,.2);
+    }
+    .concept-tag:hover { background: rgba(59,139,212,.2); }
+
+    .prob-row { margin-bottom: 10px; }
+    .prob-label { font-size:11px; letter-spacing:.08em; text-transform: uppercase; color:var(--text-secondary); margin-bottom:4px; }
+    .prob-track { height:24px; background:var(--bg-card); border-radius:4px; overflow:hidden; position:relative; }
+    .prob-fill {
+      height:100%; border-radius:4px; display:flex; align-items:center; padding:0 10px; font-size:12px; font-weight:700;
+      transition: width .6s cubic-bezier(.34,1.56,.64,1); min-width:44px;
+    }
+    .prob-buy { background: rgba(29,158,117,.25); color: var(--accent-green); border-left:3px solid var(--accent-green); }
+    .prob-wait { background: rgba(138,136,128,.15); color: var(--text-secondary); border-left:3px solid var(--text-tertiary); }
+    .prob-sell { background: rgba(216,90,48,.25); color: var(--accent-red); border-left:3px solid var(--accent-red); }
+
+    .signal-card { border:1px solid var(--border-medium); border-radius:12px; padding:24px; text-align:center; margin-top:16px; position:relative; overflow:hidden; }
+    .signal-card.buy::before { content:''; position:absolute; inset:0; background:radial-gradient(ellipse at 50% 100%, rgba(29,158,117,.15) 0%, transparent 70%); pointer-events:none; }
+    .signal-card.sell::before { content:''; position:absolute; inset:0; background:radial-gradient(ellipse at 50% 100%, rgba(216,90,48,.15) 0%, transparent 70%); pointer-events:none; }
+    .signal-text { font-size:36px; font-weight:700; }
+    .signal-text.buy { color: var(--accent-green); }
+    .signal-text.sell { color: var(--accent-red); }
+    .signal-text.wait { color: var(--text-secondary); }
+
+    .log-container { font-size:11px; background:var(--bg-base); border:1px solid var(--border-subtle); border-radius:8px; padding:12px; max-height:320px; overflow-y:auto; }
+    .log-line { padding:3px 0; border-bottom:1px solid var(--border-subtle); }
+    .log-line:last-child { border:none; }
+    .log-time { color: var(--text-tertiary); margin-right:8px; }
+    .log-ok { color: var(--accent-green); }
+    .log-warn { color: var(--accent-amber); }
+    .log-info { color: var(--accent-blue); }
+
+    ::-webkit-scrollbar { width:4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 2px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <div class="title">TRADING BRAIN</div>
+    <div class="subtitle mono">Neural Binary Options Lab</div>
+  </header>
+
+  <section class="stat-grid">
+    <div class="stat-card"><div class="val" id="statSamples">0</div><div class="lbl">Muestras</div></div>
+    <div class="stat-card"><div class="val" id="statTrain">0</div><div class="lbl">Entrenamientos</div></div>
+    <div class="stat-card"><div class="val" id="statAcc">0%</div><div class="lbl">Precisión</div></div>
+    <div class="stat-card"><div class="val" id="statSignal">WAIT</div><div class="lbl">Última señal</div></div>
+  </section>
+
+  <nav class="tab-bar" id="tabs">
+    <div class="tab active" data-tab="graph">Grafo neuronal</div>
+    <div class="tab" data-tab="transcripts">Transcripciones</div>
+    <div class="tab" data-tab="train">Entrenar</div>
+    <div class="tab" data-tab="predict">Predecir</div>
+    <div class="tab" data-tab="log">Log</div>
+  </nav>
+
+  <main class="panel-wrap">
+    <section class="panel active" id="panel-graph"><canvas id="nnCanvas" width="1200" height="420"></canvas></section>
+
+    <section class="panel" id="panel-transcripts">
+      <div class="section"><div class="label-section">Pegar transcripción</div><textarea id="transcriptInput" placeholder="Pega texto de sesión..."></textarea></div>
+      <div class="controls"><button class="btn-primary" id="extractBtn">Extraer conceptos</button></div>
+      <div class="section" style="margin-top:12px;"><div class="label-section">Keywords relevantes</div><div class="tags" id="conceptTags"></div></div>
+    </section>
+
+    <section class="panel" id="panel-train">
+      <div class="form-grid" id="trainForm"></div>
+      <div class="controls"><button class="btn-primary" id="trainBtn">Entrenar operación</button><button class="btn-ghost" id="batchBtn">Entrenamiento x100</button></div>
+    </section>
+
+    <section class="panel" id="panel-predict">
+      <div class="form-grid" id="predictForm"></div>
+      <div class="controls"><button class="btn-primary" id="predictBtn">Predecir</button></div>
+      <div style="margin-top:16px;">
+        <div class="prob-row"><div class="prob-label">BUY ↑</div><div class="prob-track"><div class="prob-fill prob-buy" id="probBuy" style="width:1%;">0%</div></div></div>
+        <div class="prob-row"><div class="prob-label">WAIT —</div><div class="prob-track"><div class="prob-fill prob-wait" id="probWait" style="width:1%;">0%</div></div></div>
+        <div class="prob-row"><div class="prob-label">SELL ↓</div><div class="prob-track"><div class="prob-fill prob-sell" id="probSell" style="width:1%;">0%</div></div></div>
+      </div>
+      <div class="signal-card" id="signalCard"><div class="signal-text wait" id="signalText">WAIT</div></div>
+    </section>
+
+    <section class="panel" id="panel-log"><div class="log-container" id="log"></div></section>
+  </main>
+
+  <script>
+    const PATTERNS = ['pin bar', 'engulfing', 'doji', 'ruptura', 'retest'];
+    const SESSIONS = ['asia', 'london', 'new york', 'overlap'];
+    const TRENDS = ['bajista', 'lateral', 'alcista'];
+    const VOLS = ['bajo', 'medio', 'alto'];
+    const OUTPUTS = ['BUY', 'WAIT', 'SELL'];
+    const TRADING_KEYWORDS = {
+      'soporte': 2, 'resistencia': 2, 'ruptura': 2, 'pin bar': 3,
+      'engulfing': 3, 'doji': 2, 'rsi': 2, 'volumen': 2,
+      'confluencia': 3, 'entrada': 3, 'retest': 3, 'oversold': 2,
+      'overbought': 2, 'tendencia': 2, 'fibonacci': 2, 'señal': 2
+    };
+
+    class NeuralNet {
+      constructor(layers) {
+        this.layers = layers;
+        this.weights = [];
+        this.biases = [];
+        this._acts = [];
+        for (let l = 1; l < layers.length; l++) {
+          const inSize = layers[l - 1], outSize = layers[l];
+          const w = Array.from({ length: outSize }, () =>
+            Array.from({ length: inSize }, () => (Math.random() - 0.5) * 0.8)
+          );
+          const b = Array.from({ length: outSize }, () => 0);
+          this.weights.push(w);
+          this.biases.push(b);
+        }
+      }
+
+      relu(x) { return Math.max(0, x); }
+      drelu(x) { return x > 0 ? 1 : 0; }
+
+      softmax(z) {
+        const m = Math.max(...z);
+        const exps = z.map(v => Math.exp(v - m));
+        const sum = exps.reduce((a, b) => a + b, 0);
+        return exps.map(v => v / sum);
+      }
+
+      forward(input) {
+        let a = [...input];
+        this._acts = [a];
+        this._zs = [];
+        for (let l = 0; l < this.weights.length; l++) {
+          const z = this.weights[l].map((row, i) => row.reduce((acc, w, j) => acc + w * a[j], this.biases[l][i]));
+          this._zs.push(z);
+          a = l === this.weights.length - 1 ? this.softmax(z) : z.map(v => this.relu(v));
+          this._acts.push(a);
+        }
+        return a;
+      }
+
+      train(input, target, lr = 0.04) {
+        const out = this.forward(input);
+        const deltas = new Array(this.weights.length);
+        deltas[deltas.length - 1] = out.map((v, i) => v - target[i]);
+
+        for (let l = this.weights.length - 2; l >= 0; l--) {
+          const nextDelta = deltas[l + 1];
+          const nextW = this.weights[l + 1];
+          const z = this._zs[l];
+          deltas[l] = z.map((val, i) => {
+            let sum = 0;
+            for (let k = 0; k < nextW.length; k++) sum += nextW[k][i] * nextDelta[k];
+            return sum * this.drelu(val);
+          });
+        }
+
+        for (let l = 0; l < this.weights.length; l++) {
+          const aPrev = this._acts[l];
+          for (let i = 0; i < this.weights[l].length; i++) {
+            for (let j = 0; j < this.weights[l][i].length; j++) {
+              this.weights[l][i][j] -= lr * deltas[l][i] * aPrev[j];
+            }
+            this.biases[l][i] -= lr * deltas[l][i];
+          }
+        }
+        return -target.reduce((acc, t, i) => acc + t * Math.log((out[i] || 1e-8) + 1e-8), 0);
+      }
+    }
+
+    function encodeInput(pattern, session, rsi, trend, vol) {
+      const r = parseFloat(rsi);
+      return [
+        PATTERNS.indexOf(pattern) / 4,
+        SESSIONS.indexOf(session) / 3,
+        r / 100,
+        TRENDS.indexOf(trend) / 2,
+        VOLS.indexOf(vol) / 2,
+        r < 30 ? 1 : 0,
+        r > 70 ? 1 : 0
+      ];
+    }
+
+    const NET = new NeuralNet([7, 12, 8, 3]);
+    const metrics = { samples: 0, trains: 0, wins: 0, losses: 0, lastSignal: 'WAIT' };
+
+    function createForm(hostId, includeResult) {
+      const host = document.getElementById(hostId);
+      const fields = [
+        ['Patrón', `<select id="${hostId}-pattern">${PATTERNS.map(v => `<option>${v}</option>`).join('')}</select>`],
+        ['Sesión', `<select id="${hostId}-session">${SESSIONS.map(v => `<option>${v}</option>`).join('')}</select>`],
+        ['RSI', `<input id="${hostId}-rsi" type="number" min="0" max="100" value="50" />`],
+        ['Tendencia', `<select id="${hostId}-trend">${TRENDS.map(v => `<option>${v}</option>`).join('')}</select>`],
+        ['Volumen', `<select id="${hostId}-vol">${VOLS.map(v => `<option>${v}</option>`).join('')}</select>`]
+      ];
+      if (includeResult) fields.push(['Resultado', `<select id="${hostId}-result"><option>WIN</option><option>LOSS</option></select>`]);
+      host.innerHTML = fields.map(([lbl, el]) => `<div><div class="label-section">${lbl}</div>${el}</div>`).join('');
+    }
+
+    createForm('trainForm', true);
+    createForm('predictForm', false);
+
+    function getFormData(hostId, includeResult) {
+      const pattern = document.getElementById(`${hostId}-pattern`).value;
+      const session = document.getElementById(`${hostId}-session`).value;
+      const rsi = document.getElementById(`${hostId}-rsi`).value;
+      const trend = document.getElementById(`${hostId}-trend`).value;
+      const vol = document.getElementById(`${hostId}-vol`).value;
+      const data = { pattern, session, rsi, trend, vol, input: encodeInput(pattern, session, rsi, trend, vol) };
+      if (includeResult) data.result = document.getElementById(`${hostId}-result`).value;
+      return data;
+    }
+
+    function addLog(type, txt) {
+      const node = document.createElement('div');
+      node.className = 'log-line';
+      const time = new Date().toLocaleTimeString();
+      node.innerHTML = `<span class="log-time">[${time}]</span><span class="${type}">${txt}</span>`;
+      const log = document.getElementById('log');
+      log.prepend(node);
+    }
+
+    function updateStats() {
+      document.getElementById('statSamples').textContent = String(metrics.samples);
+      document.getElementById('statTrain').textContent = String(metrics.trains);
+      const total = metrics.wins + metrics.losses;
+      const acc = total ? (metrics.wins / total) * 100 : 0;
+      const accEl = document.getElementById('statAcc');
+      accEl.textContent = `${acc.toFixed(1)}%`;
+      accEl.style.color = acc < 50 ? 'var(--accent-red)' : acc <= 70 ? 'var(--accent-amber)' : 'var(--accent-green)';
+      document.getElementById('statSignal').textContent = metrics.lastSignal;
+    }
+
+    function drawGraph() {
+      const canvas = document.getElementById('nnCanvas');
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width, h = canvas.height;
+      canvas.style.opacity = '0';
+      requestAnimationFrame(() => canvas.style.opacity = '1');
+      ctx.clearRect(0, 0, w, h);
+
+      const cols = [0.08, 0.33, 0.58, 0.83];
+      const layerColors = ['#1D9E75', '#7F77DD', '#BA7517', '#D85A30'];
+      const inputLabels = ['Pat','Ses','RSI','Tend','Vol','OS','OB'];
+      const outputLabels = ['BUY ↑', 'WAIT —', 'SELL ↓'];
+
+      const positions = NET.layers.map((n, l) => {
+        const cx = cols[l] * w;
+        return Array.from({ length: n }, (_, i) => {
+          const t = n === 1 ? 0.5 : i / (n - 1);
+          const cy = h * (0.15 + t * 0.7);
+          return { x: cx, y: cy };
+        });
+      });
+
+      for (let l = 0; l < NET.weights.length; l++) {
+        for (let i = 0; i < NET.weights[l].length; i++) {
+          for (let j = 0; j < NET.weights[l][i].length; j++) {
+            const weight = NET.weights[l][i][j];
+            const alpha = Math.min(0.6, Math.abs(weight) * 0.7);
+            ctx.strokeStyle = weight > 0 ? `rgba(29,158,117,${alpha})` : `rgba(216,90,48,${alpha})`;
+            ctx.lineWidth = Math.min(2, Math.abs(weight) * 1.5);
+            ctx.beginPath();
+            ctx.moveTo(positions[l][j].x, positions[l][j].y);
+            ctx.lineTo(positions[l + 1][i].x, positions[l + 1][i].y);
+            ctx.stroke();
+          }
+        }
+      }
+
+      for (let l = 0; l < positions.length; l++) {
+        positions[l].forEach((p, i) => {
+          ctx.fillStyle = layerColors[l];
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
+          ctx.fill();
+          const acts = NET._acts[l] || [];
+          if (acts[i] != null) {
+            ctx.fillStyle = 'rgba(232,230,223,.7)';
+            ctx.font = '10px JetBrains Mono';
+            ctx.fillText(acts[i].toFixed(2), p.x + 12, p.y + 3);
+          }
+          if (l === 0) {
+            ctx.fillStyle = '#8a8880';
+            ctx.font = '11px JetBrains Mono';
+            ctx.fillText(inputLabels[i], p.x - 38, p.y + 3);
+          }
+          if (l === positions.length - 1) {
+            ctx.fillStyle = '#8a8880';
+            ctx.font = '11px JetBrains Mono';
+            ctx.fillText(outputLabels[i], p.x + 16, p.y + 3);
+          }
+        });
+      }
+    }
+
+    function extractKeywords() {
+      const text = document.getElementById('transcriptInput').value.toLowerCase();
+      const rows = Object.entries(TRADING_KEYWORDS).map(([word, w]) => {
+        const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const m = text.match(new RegExp(escaped, 'g'));
+        const count = m ? m.length : 0;
+        return { word, score: count * w, count };
+      }).filter(r => r.score > 0).sort((a, b) => b.score - a.score);
+      const wrap = document.getElementById('conceptTags');
+      wrap.innerHTML = rows.length ? rows.map(r => `<span class="concept-tag">${r.word} · ${r.score}</span>`).join('') : '<span class="label-section">Sin conceptos detectados</span>';
+      addLog('log-info', `Transcripción procesada: ${rows.length} keywords detectadas.`);
+    }
+
+    function predictAndRender(data) {
+      const out = NET.forward(data.input);
+      const pct = out.map(v => Math.round(v * 1000) / 10);
+      ['Buy','Wait','Sell'].forEach((k, i) => {
+        const el = document.getElementById(`prob${k}`);
+        el.style.width = `${Math.max(1, pct[i])}%`;
+        el.textContent = `${pct[i].toFixed(1)}%`;
+      });
+      const idx = out.indexOf(Math.max(...out));
+      const signal = OUTPUTS[idx];
+      metrics.lastSignal = signal;
+      const signalCard = document.getElementById('signalCard');
+      signalCard.className = `signal-card ${signal === 'BUY' ? 'buy' : signal === 'SELL' ? 'sell' : ''}`;
+      const textEl = document.getElementById('signalText');
+      textEl.className = `signal-text ${signal.toLowerCase()}`;
+      textEl.textContent = signal;
+      updateStats();
+      addLog('log-info', `Predicción: ${signal} (${pct.map(v => v.toFixed(1)).join('% / ')}%).`);
+      drawGraph();
+      return signal;
+    }
+
+    document.getElementById('extractBtn').addEventListener('click', extractKeywords);
+
+    document.getElementById('trainBtn').addEventListener('click', () => {
+      const btn = document.getElementById('trainBtn');
+      btn.classList.add('loading');
+      btn.textContent = 'Entrenando...';
+      const data = getFormData('trainForm', true);
+      const target = data.result === 'WIN' ? [1,0,0] : [0,0,1];
+      const loss = NET.train(data.input, target, 0.04);
+      metrics.samples += 1;
+      metrics.trains += 1;
+      if (data.result === 'WIN') metrics.wins += 1; else metrics.losses += 1;
+      updateStats();
+      drawGraph();
+      addLog('log-ok', `Entrenada operación (${data.result}) con loss ${loss.toFixed(4)}.`);
+      setTimeout(() => { btn.classList.remove('loading'); btn.textContent = 'Entrenar operación'; }, 250);
+    });
+
+    document.getElementById('batchBtn').addEventListener('click', () => {
+      const data = getFormData('trainForm', true);
+      const target = data.result === 'WIN' ? [1,0,0] : [0,0,1];
+      for (let i = 0; i < 100; i++) NET.train(data.input, target, 0.04);
+      metrics.samples += 100;
+      metrics.trains += 100;
+      if (data.result === 'WIN') metrics.wins += 100; else metrics.losses += 100;
+      updateStats();
+      drawGraph();
+      addLog('log-warn', 'Entrenamiento intensivo x100 completado.');
+    });
+
+    document.getElementById('predictBtn').addEventListener('click', () => {
+      const data = getFormData('predictForm', false);
+      predictAndRender(data);
+    });
+
+    document.getElementById('tabs').addEventListener('click', (e) => {
+      const tab = e.target.closest('.tab');
+      if (!tab) return;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.getElementById(`panel-${tab.dataset.tab}`).classList.add('active');
+      if (tab.dataset.tab === 'graph') drawGraph();
+    });
+
+    addLog('log-info', 'Trading Brain inicializado.');
+    updateStats();
+    predictAndRender(getFormData('predictForm', false));
+  </script>
+</body>
+</html>
