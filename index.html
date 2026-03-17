@@ -227,6 +227,7 @@ class LivingBrain {
     this.totalNeuronsBorn = 0;
     this.totalNeuronsDied = 0;
     this.backtestDelayMs = 80;
+    this.autoPatternCounter = 0;
     this.transcriptConceptMap = [
       { key: 'compradores atrapados', label: 'Compradores Atrapados', type: 'pattern', signal: 'SELL', regex: /compradores? atrapados?|buyers? trapped/i },
       { key: 'rendicion', label: 'Rendición', type: 'concept', signal: 'SELL', regex: /rendici[oó]n|capitulaci[oó]n/i },
@@ -366,7 +367,7 @@ class LivingBrain {
       const dynamicLearningRate = neuron.activations > 50 && neuron.weight < 0.4 ? 2 : 1;
       neuron.weight = Math.max(0, neuron.weight - (entropyDecay * dynamicLearningRate));
       neuron.confidence = neuron.weight;
-      if (neuron.generation > 1 && neuron.weight < DEATH_THRESHOLD) {
+      if (neuron.generation > 1 && neuron.weight < DEATH_THRESHOLD && !neuron.isProtected) {
         this.neurons.delete(id);
         this.totalNeuronsDied += 1;
       }
@@ -394,6 +395,7 @@ class LivingBrain {
       const protectedNewGen1 = neuron.generation === 1 && (now - (neuron.born || 0)) < fiveMinutesMs;
       const lowWeight = neuron.weight < 0.2 && !protectedNewGen1;
       const isVideoConceptLoser = neuron.name.includes('Concepto video') && avgRulePerformance !== null && winRate < avgRulePerformance;
+      if (neuron.isProtected) continue;
       if (lowWinRate || lowWeight || isVideoConceptLoser) removableIds.push(id);
     }
 
@@ -422,6 +424,9 @@ class LivingBrain {
 
       this.observations += 1;
       const features = this.extractFeatures(candle);
+      const candleOutcome = nextCandle.close >= candle.close ? 'WIN' : 'LOSS';
+      this.pendingPatterns.push({ features, outcome: candleOutcome, timestamp: Date.now() });
+      this.checkForNewNeurons();
       const activated = [];
       for (const neuron of this.neurons.values()) {
         const score = this.matchScore(neuron.triggers, features);
@@ -435,10 +440,8 @@ class LivingBrain {
       activated.forEach(({ neuron }) => {
         const predictedDirection = neuron.signal === 'BUY' ? 'bullish' : neuron.signal === 'SELL' ? 'bearish' : 'neutral';
         const success = predictedDirection === nextDirection;
-        neuron.weight = Math.min(1, Math.max(0, neuron.weight + (success ? 0.1 : -0.15)));
-        neuron.confidence = neuron.weight;
+        this.applyNeuronOutcome(neuron, success ? 'WIN' : 'LOSS');
         if (success) {
-          neuron.correctPredictions += 1;
           neuron.successfulActivations += 1;
           wins += 1;
         } else {
@@ -453,6 +456,12 @@ class LivingBrain {
     }
 
     this.backtestCycles += 1;
+    for (const neuron of this.neurons.values()) {
+      if (neuron.autoDiscovered && neuron.weight > 0.6) {
+        neuron.validationStatus = 'Patrón Validado';
+        neuron.isProtected = true;
+      }
+    }
     const report = this.generateSurvivalReport();
     return { candlesProcessed: Math.max(0, candles.length - 1), wins, losses, activations: wins + losses, report };
   }
@@ -607,13 +616,30 @@ class LivingBrain {
     const features = this.extractFeatures(candleData);
     const matching = this.findMatchingNeuron(features);
     if (matching) {
-      matching.weight = Math.min(1, Math.max(0, matching.weight + (outcome === 'WIN' ? 0.05 : -0.03)));
-      matching.correctPredictions += outcome === 'WIN' ? 1 : 0;
-      matching.confidence = matching.weight;
+      this.applyNeuronOutcome(matching, outcome);
       return { reinforced: matching.id };
     }
     this.pendingPatterns.push({ features, outcome, timestamp: Date.now() });
     return this.checkForNewNeurons();
+  }
+
+  applyNeuronOutcome(neuron, outcome) {
+    if (!neuron) return;
+    const delta = outcome === 'WIN'
+      ? 0.15
+      : (neuron.isProtected ? -0.05 : -0.20);
+    neuron.weight = Math.min(1, Math.max(0, neuron.weight + delta));
+    neuron.correctPredictions += outcome === 'WIN' ? 1 : 0;
+    neuron.confidence = neuron.weight;
+    this.autopruning(neuron);
+  }
+
+  autopruning(neuron) {
+    if (!neuron || neuron.type !== 'pattern' || neuron.isProtected || neuron.weight >= 0.1) return false;
+    if (!this.neurons.delete(neuron.id)) return false;
+    this.totalNeuronsDied += 1;
+    if (typeof addLog === 'function') addLog('Neurona fallida eliminada por selección natural');
+    return true;
   }
 
   similarity(a, b) {
@@ -621,19 +647,26 @@ class LivingBrain {
   }
 
   checkForNewNeurons() {
-    const groups = [];
+    const groups = new Map();
     this.pendingPatterns.forEach((p) => {
-      let g = groups.find(gr => this.similarity(gr.ref.bodyRatio, p.features.bodyRatio) && this.similarity(gr.ref.wickLower, p.features.wickLower));
-      if (!g) {
-        g = { ref: p.features, items: [] };
-        groups.push(g);
-      }
-      g.items.push(p);
+      const signature = `${p.features.trend}|${p.features.bodyRatio.toFixed(2)}|${p.features.wickLower.toFixed(2)}`;
+      if (!groups.has(signature)) groups.set(signature, { signature, ref: p.features, items: [] });
+      groups.get(signature).items.push(p);
     });
-    for (const g of groups) {
+
+    for (const g of groups.values()) {
       const wins = g.items.filter(i => i.outcome === 'WIN').length;
-      if (g.items.length >= this.consolidationThreshold && wins >= Math.ceil(g.items.length / 2)) {
-        const neuron = this.birthNeuron({ features: g.ref, signal: wins / g.items.length > 0.6 ? 'BUY' : 'WAIT', description: 'Patrón consolidado desde velas históricas' });
+      const alreadyCreated = Array.from(this.neurons.values()).some((n) => n.type === 'pattern' && n.autoPatternSignature === g.signature);
+      if (g.items.length >= 2 && wins >= 1 && !alreadyCreated) {
+        const neuron = this.birthNeuron({
+          features: g.ref,
+          signal: wins / g.items.length > 0.6 ? 'BUY' : 'WAIT',
+          description: 'Patrón consolidado desde velas históricas',
+          name: `Patrón Auto-Descubierto #${++this.autoPatternCounter}`,
+          weight: 0.5,
+          autoDiscovered: true,
+          autoPatternSignature: g.signature
+        });
         this.pendingPatterns = this.pendingPatterns.filter(i => !g.items.includes(i));
         return { born: neuron.id };
       }
@@ -643,14 +676,18 @@ class LivingBrain {
 
   birthNeuron(pattern) {
     const neuron = this.makeNeuron({
-      name: `Mecha ${pattern.signal === 'BUY' ? 'Alcista' : pattern.signal === 'SELL' ? 'Bajista' : 'Mixta'} RSI`,
+      name: pattern.name || `Mecha ${pattern.signal === 'BUY' ? 'Alcista' : pattern.signal === 'SELL' ? 'Bajista' : 'Mixta'} RSI`,
       type: 'pattern',
       triggers: pattern.features,
-      weight: 0.6,
+      weight: pattern.weight ?? 0.6,
       description: pattern.description,
       signal: pattern.signal,
       generation: pattern.generation || 1
     });
+    neuron.autoDiscovered = Boolean(pattern.autoDiscovered);
+    neuron.autoPatternSignature = pattern.autoPatternSignature || null;
+    neuron.validationStatus = pattern.validationStatus || null;
+    neuron.isProtected = Boolean(pattern.isProtected);
     this.neurons.set(neuron.id, neuron);
     dispatchEvent(new CustomEvent('neuron:born', { detail: neuron }));
     return neuron;
@@ -757,6 +794,7 @@ class LivingBrain {
       pendingPatterns: this.pendingPatterns,
       totalNeuronsBorn: this.totalNeuronsBorn,
       totalNeuronsDied: this.totalNeuronsDied,
+      autoPatternCounter: this.autoPatternCounter,
       neurons: Array.from(this.neurons.values())
     };
   }
@@ -768,6 +806,7 @@ class LivingBrain {
     this.pendingPatterns = state.pendingPatterns || [];
     this.totalNeuronsBorn = state.totalNeuronsBorn || 0;
     this.totalNeuronsDied = state.totalNeuronsDied || 0;
+    this.autoPatternCounter = state.autoPatternCounter || 0;
     this.neurons = new Map((state.neurons || []).map(n => [n.id, { successfulActivations: 0, ...n }]));
     if (!this.totalNeuronsBorn) this.totalNeuronsBorn = this.neurons.size;
 
