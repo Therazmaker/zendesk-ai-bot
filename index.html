@@ -1129,7 +1129,75 @@ class LivingBrain {
 
 const brain = new LivingBrain();
 const storageKey = 'living-brain-state-v1';
-brain.importState(JSON.parse(localStorage.getItem(storageKey) || 'null'));
+
+function loadSavedState() {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (err) {
+    console.warn('No se pudo leer el estado guardado. Se restablecerá el almacenamiento.', err);
+    localStorage.removeItem(storageKey);
+    return null;
+  }
+}
+
+function pruneNeuronForStorage(neuron) {
+  const {
+    recentOutcomes,
+    ...rest
+  } = neuron;
+
+  return {
+    ...rest,
+    connections: (neuron.connections || []).slice(0, 25)
+  };
+}
+
+function buildStorageSnapshot(maxNeurons = Infinity) {
+  const base = brain.exportState();
+  if (Number.isFinite(maxNeurons) && base.neurons.length > maxNeurons) {
+    const ranked = [...base.neurons].sort((a, b) => {
+      const scoreA = (a.weight || 0) + ((a.activations || 0) / 100);
+      const scoreB = (b.weight || 0) + ((b.activations || 0) / 100);
+      return scoreB - scoreA;
+    });
+    base.neurons = ranked.slice(0, maxNeurons);
+  }
+
+  base.pendingPatterns = (base.pendingPatterns || []).slice(-150);
+  base.neurons = (base.neurons || []).map(pruneNeuronForStorage);
+  return base;
+}
+
+function persistStateWithFallback() {
+  const tiers = [Infinity, 600, 350, 200, 100];
+  for (const maxNeurons of tiers) {
+    try {
+      const payload = JSON.stringify(buildStorageSnapshot(maxNeurons));
+      localStorage.setItem(storageKey, payload);
+      return true;
+    } catch (err) {
+      if (err?.name !== 'QuotaExceededError') {
+        console.error('Error inesperado al guardar el estado', err);
+        return false;
+      }
+    }
+  }
+
+  try {
+    localStorage.removeItem(storageKey);
+    localStorage.setItem(storageKey, JSON.stringify(buildStorageSnapshot(60)));
+    addLog('⚠️ Estado comprimido por límite de almacenamiento local.');
+    return true;
+  } catch (err) {
+    console.error('No fue posible guardar ni en modo comprimido.', err);
+    addLog('❌ No fue posible persistir el estado en localStorage.');
+    return false;
+  }
+}
+
+brain.importState(loadSavedState());
 
 const nodesSim = new Map();
 const birthAnimations = [];
@@ -1272,7 +1340,7 @@ function resizeCanvas() {
 }
 window.addEventListener('resize', resizeCanvas);
 
-function saveState() { localStorage.setItem(storageKey, JSON.stringify(brain.exportState())); }
+function saveState() { persistStateWithFallback(); }
 
 function addLog(text) {
   const log = document.getElementById('log');
