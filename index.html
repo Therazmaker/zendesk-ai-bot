@@ -3,528 +3,699 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Trading Brain</title>
+  <title>Living Neural Brain</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;500;700&display=swap');
-
     :root {
-      --bg-base: #0a0a0a;
-      --bg-surface: #111113;
-      --bg-card: #17171a;
-      --bg-hover: #1e1e22;
-      --accent-green: #1D9E75;
-      --accent-red: #D85A30;
-      --accent-amber: #BA7517;
-      --accent-purple: #7F77DD;
-      --accent-blue: #3B8BD4;
-      --text-primary: #e8e6df;
-      --text-secondary: #8a8880;
-      --text-tertiary: #4a4845;
-      --border-subtle: rgba(255,255,255,0.06);
-      --border-medium: rgba(255,255,255,0.12);
-      --border-strong: rgba(255,255,255,0.22);
+      --bg-void: #060608;
+      --bg-deep: #0c0c10;
+      --bg-surface: #13131a;
+      --bg-lift: #1a1a24;
+      --neuron-gen1: #1DB584;
+      --neuron-gen2: #7B6FE8;
+      --neuron-gen3: #E8A020;
+      --signal-buy: #00E5A0;
+      --signal-sell: #FF4757;
+      --signal-wait: #5A5A7A;
+      --conn-active: rgba(29,181,132,0.35);
+      --conn-dormant: rgba(255,255,255,0.04);
+      --conn-firing: rgba(0,229,160,0.7);
+      --text-primary: #dddbd4;
+      --text-secondary: #7a7870;
+      --text-tertiary: #3a3835;
+      --text-narrative: #c8f0e0;
+      --border-faint: rgba(255,255,255,0.04);
+      --border-subtle: rgba(255,255,255,0.08);
+      --border-medium: rgba(255,255,255,0.15);
     }
 
     * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--bg-base);
-      color: var(--text-primary);
-      font-family: 'Syne', sans-serif;
-      min-height: 100vh;
-    }
+    body { margin: 0; background: var(--bg-void); color: var(--text-primary); font-family: 'Space Grotesk', sans-serif; }
+    .mono, .narrative, .log, canvas, .text-stat, input, textarea, select { font-family: 'Space Mono', monospace; }
+    .text-label { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--text-tertiary); }
+    .text-sm { font-size: 12px; color: var(--text-secondary); }
+    .text-base { font-size: 14px; color: var(--text-primary); }
+    .text-lg { font-size: 18px; font-weight: 600; }
+    .text-stat { font-size: 26px; font-weight: 700; }
 
-    .mono, canvas, .log-container, .val, .prob-fill, .signal-text, .concept-tag { font-family: 'JetBrains Mono', monospace; }
+    .app { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+    .graph-col { border-right: 1px solid var(--border-faint); background: var(--bg-void); position: relative; }
+    #brainCanvas { width: 100%; height: 100vh; display: block; }
+    .tooltip { position: absolute; pointer-events: none; background: var(--bg-lift); border: 1px solid var(--border-subtle); padding: 8px; border-radius: 6px; font-size: 11px; opacity: 0; transform: translate(-50%, -120%); white-space: nowrap; }
+    .weight-mini { width: 120px; height: 4px; border-radius: 3px; background: var(--border-faint); margin-top: 4px; overflow: hidden; }
+    .weight-mini > span { display: block; height: 100%; background: var(--neuron-gen1); }
 
-    .app-header {
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      border-bottom: 1px solid var(--border-subtle);
-      padding: 0 24px;
-      height: 52px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      backdrop-filter: blur(12px);
-      background: rgba(10,10,10,0.85);
-    }
+    .main-col { display: flex; flex-direction: column; }
+    header { height: 68px; border-bottom: 1px solid var(--border-faint); background: var(--bg-deep); display: flex; align-items: center; justify-content: space-between; padding: 0 18px; }
+    .stats { display: flex; gap: 12px; }
+    .stat { padding: 6px 10px; border: 1px solid var(--border-faint); border-radius: 8px; background: var(--bg-surface); }
 
-    .title { font-size: 17px; font-weight: 700; letter-spacing: .05em; }
-    .subtitle { color: var(--text-secondary); font-size: 12px; }
+    .tabs { display: flex; gap: 8px; padding: 10px 18px; border-bottom: 1px solid var(--border-faint); }
+    .tab { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; padding: 8px 12px; border: 1px solid var(--border-faint); border-radius: 8px; color: var(--text-secondary); cursor: pointer; }
+    .tab.active { color: var(--text-primary); border-color: var(--border-medium); background: var(--bg-surface); }
 
-    .stat-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 1px;
-      background: var(--border-subtle);
-      border: 1px solid var(--border-subtle);
-      border-radius: 10px;
-      overflow: hidden;
-      margin: 16px 24px;
-    }
-    .stat-card { background: var(--bg-card); padding: 16px 20px; }
-    .stat-card .val { font-size: 28px; font-weight: 700; line-height: 1; }
-    .stat-card .lbl { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-tertiary); margin-top: 6px; }
+    .panel-wrap { padding: 16px 18px 22px; }
+    .panel { display: none; background: var(--bg-deep); border: 1px solid var(--border-faint); border-radius: 12px; padding: 16px; }
+    .panel.active { display: block; animation: panelIn .2s ease-out; }
+    @keyframes panelIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
 
-    .tab-bar {
-      display: flex;
-      border-bottom: 1px solid var(--border-subtle);
-      padding: 0 24px;
-    }
-    .tab {
-      padding: 12px 20px;
-      font-size: 13px;
-      cursor: pointer;
-      color: var(--text-secondary);
-      border-bottom: 2px solid transparent;
-      transition: color .15s, border-color .15s;
-      position: relative;
-      top: 1px;
-      user-select: none;
-    }
-    .tab:hover { color: var(--text-primary); }
-    .tab.active { color: var(--text-primary); border-bottom-color: var(--accent-green); font-weight: 500; }
+    .tx-area { width: 100%; min-height: 120px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 8px; color: var(--text-primary); font-size: 12px; line-height: 1.7; padding: 12px 16px; resize: vertical; outline: none; transition: border-color .15s; }
+    .tx-area:focus { border-color: var(--border-medium); }
+    .tx-area::placeholder { color: var(--text-tertiary); }
 
-    .panel-wrap { padding: 16px 24px 24px; }
-    .panel { display: none; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 10px; padding: 16px; }
-    .panel.active { display: block; animation: fadeSlideIn .2s ease-out; }
-    @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .rule-row, .observe-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
+    .candle-form { display: grid; grid-template-columns: repeat(5, 1fr) auto; gap: 8px; align-items: end; }
+    .field-group label { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-tertiary); display:block; margin-bottom: 4px; }
+    .field-group input, .field-group select { width: 100%; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 6px; color: var(--text-primary); font-size: 13px; padding: 7px 10px; outline: none; }
+    .field-group input:focus, .field-group select:focus { border-color: var(--neuron-gen1); }
 
-    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(200px,1fr)); gap: 12px; }
-    .form-grid { display: grid; grid-template-columns: repeat(3, minmax(140px,1fr)); gap: 10px; }
-
-    input, select, textarea {
-      width: 100%;
-      background: var(--bg-card);
-      border: 1px solid var(--border-subtle);
-      border-radius: 6px;
-      color: var(--text-primary);
-      font-size: 13px;
-      padding: 7px 10px;
-      outline: none;
-      font-family: 'Syne', sans-serif;
-      transition: border-color .15s;
-    }
-    textarea { min-height: 140px; resize: vertical; }
-    input:focus, select:focus, textarea:focus { border-color: var(--border-strong); }
-    input:hover, select:hover, textarea:hover { border-color: var(--border-medium); }
-
-    .btn-primary {
-      background: var(--accent-green);
-      color: #fff;
-      border: none;
-      border-radius: 6px;
-      padding: 8px 18px;
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      font-family: 'Syne', sans-serif;
-      transition: opacity .15s, transform .1s;
-    }
+    .btn-primary { background: var(--neuron-gen1); color: #000; font-weight: 700; font-family: 'Space Grotesk'; font-size: 13px; padding: 9px 20px; border: none; border-radius: 6px; cursor: pointer; letter-spacing: .04em; }
     .btn-primary:hover { opacity: .88; }
     .btn-primary:active { transform: scale(0.97); }
-    .btn-primary.loading { opacity: .6; pointer-events: none; }
+    .btn-ghost { background: transparent; color: var(--text-secondary); font-size: 13px; padding: 9px 20px; border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; }
+    .btn-ghost:hover { border-color: var(--border-medium); color: var(--text-primary); background: var(--bg-lift); }
 
-    .btn-ghost {
-      background: transparent;
-      color: var(--text-secondary);
-      border: 1px solid var(--border-medium);
-      border-radius: 6px;
-      padding: 8px 18px;
-      font-size: 13px;
-      cursor: pointer;
-      font-family: 'Syne', sans-serif;
-      transition: all .15s;
-    }
-    .btn-ghost:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .narrative-panel { background: var(--bg-deep); border: 1px solid var(--border-faint); border-radius: 12px; padding: 20px 24px; min-height: 180px; position: relative; overflow: hidden; }
+    .narrative-panel::before { content:''; position:absolute; inset:0; background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.08) 2px,rgba(0,0,0,0.08) 4px); pointer-events:none; }
+    .narrative-history { opacity: .3; font-size: 11px; color: var(--text-secondary); margin-bottom: 12px; border-bottom: 1px solid var(--border-faint); padding-bottom: 10px; }
+    .narrative-text { font-size: 13px; line-height: 1.9; color: var(--text-narrative); white-space: pre-wrap; position: relative; z-index: 1; }
+    .narrative-cursor { display: inline-block; width: 8px; height: 14px; background: var(--signal-buy); animation: blink .8s step-end infinite; vertical-align: text-bottom; margin-left: 2px; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
 
-    .controls { display:flex; gap:10px; margin-top: 12px; }
-    .section { margin-bottom: 14px; }
-    .label-section { font-size:10px; letter-spacing:.12em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom:6px; }
+    .signal-badge { display: inline-flex; align-items:center; gap:8px; padding: 10px 20px; border-radius: 8px; font-size:15px; font-weight:700; letter-spacing:.06em; position:relative; overflow:hidden; }
+    .signal-badge.buy { background: rgba(0,229,160,.1); color: var(--signal-buy); border: 1px solid rgba(0,229,160,.3); box-shadow: 0 0 20px rgba(0,229,160,.15), inset 0 0 20px rgba(0,229,160,.05); }
+    .signal-badge.sell { background: rgba(255,71,87,.1); color: var(--signal-sell); border: 1px solid rgba(255,71,87,.3); box-shadow: 0 0 20px rgba(255,71,87,.15), inset 0 0 20px rgba(255,71,87,.05); }
+    .signal-badge.wait { background: rgba(90,90,122,.12); color: var(--signal-wait); border: 1px solid rgba(90,90,122,.3); }
+    .confidence-fill { position:absolute; left:0; top:0; bottom:0; background: currentColor; opacity:.06; transition: width .6s cubic-bezier(.34,1.56,.64,1); }
 
-    #nnCanvas { width: 100%; height: 380px; border: 1px solid var(--border-subtle); border-radius: 8px; background: #0d0d10; transition: opacity .3s; }
-
-    .tags { display: flex; flex-wrap: wrap; min-height: 34px; }
-    .concept-tag {
-      display:inline-flex; align-items:center; gap:4px; font-size:11px; padding:3px 10px; border-radius:20px; margin:3px;
-      background: rgba(59,139,212,.12); color: var(--accent-blue); border:1px solid rgba(59,139,212,.2);
-    }
-    .concept-tag:hover { background: rgba(59,139,212,.2); }
-
-    .prob-row { margin-bottom: 10px; }
-    .prob-label { font-size:11px; letter-spacing:.08em; text-transform: uppercase; color:var(--text-secondary); margin-bottom:4px; }
-    .prob-track { height:24px; background:var(--bg-card); border-radius:4px; overflow:hidden; position:relative; }
-    .prob-fill {
-      height:100%; border-radius:4px; display:flex; align-items:center; padding:0 10px; font-size:12px; font-weight:700;
-      transition: width .6s cubic-bezier(.34,1.56,.64,1); min-width:44px;
-    }
-    .prob-buy { background: rgba(29,158,117,.25); color: var(--accent-green); border-left:3px solid var(--accent-green); }
-    .prob-wait { background: rgba(138,136,128,.15); color: var(--text-secondary); border-left:3px solid var(--text-tertiary); }
-    .prob-sell { background: rgba(216,90,48,.25); color: var(--accent-red); border-left:3px solid var(--accent-red); }
-
-    .signal-card { border:1px solid var(--border-medium); border-radius:12px; padding:24px; text-align:center; margin-top:16px; position:relative; overflow:hidden; }
-    .signal-card.buy::before { content:''; position:absolute; inset:0; background:radial-gradient(ellipse at 50% 100%, rgba(29,158,117,.15) 0%, transparent 70%); pointer-events:none; }
-    .signal-card.sell::before { content:''; position:absolute; inset:0; background:radial-gradient(ellipse at 50% 100%, rgba(216,90,48,.15) 0%, transparent 70%); pointer-events:none; }
-    .signal-text { font-size:36px; font-weight:700; }
-    .signal-text.buy { color: var(--accent-green); }
-    .signal-text.sell { color: var(--accent-red); }
-    .signal-text.wait { color: var(--text-secondary); }
-
-    .log-container { font-size:11px; background:var(--bg-base); border:1px solid var(--border-subtle); border-radius:8px; padding:12px; max-height:320px; overflow-y:auto; }
-    .log-line { padding:3px 0; border-bottom:1px solid var(--border-subtle); }
-    .log-line:last-child { border:none; }
-    .log-time { color: var(--text-tertiary); margin-right:8px; }
-    .log-ok { color: var(--accent-green); }
-    .log-warn { color: var(--accent-amber); }
-    .log-info { color: var(--accent-blue); }
-
-    ::-webkit-scrollbar { width:4px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 2px; }
-    ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+    .neuron-item { display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:8px; border:1px solid var(--border-faint); margin-bottom:6px; background: var(--bg-surface); }
+    .neuron-item:hover { border-color: var(--border-subtle); background: var(--bg-lift); }
+    .neuron-orb { width:10px; height:10px; border-radius:50%; flex-shrink:0; box-shadow: 0 0 8px currentColor; }
+    .weight-bar { height:3px; background: var(--border-faint); border-radius:2px; flex:1; }
+    .weight-fill { height:100%; border-radius:2px; background: var(--neuron-gen1); transition: width .4s ease; }
+    .log { max-height: 230px; overflow: auto; border:1px solid var(--border-faint); background: var(--bg-surface); border-radius: 8px; padding: 10px; font-size: 11px; }
+    .log-line { animation: logIn .15s ease-out; margin-bottom: 4px; }
+    @keyframes logIn { from { opacity:0; transform:translateX(-6px); } to { opacity:1; transform:translateX(0); } }
   </style>
 </head>
 <body>
-  <header class="app-header">
-    <div class="title">TRADING BRAIN</div>
-    <div class="subtitle mono">Neural Binary Options Lab</div>
-  </header>
-
-  <section class="stat-grid">
-    <div class="stat-card"><div class="val" id="statSamples">0</div><div class="lbl">Muestras</div></div>
-    <div class="stat-card"><div class="val" id="statTrain">0</div><div class="lbl">Entrenamientos</div></div>
-    <div class="stat-card"><div class="val" id="statAcc">0%</div><div class="lbl">Precisión</div></div>
-    <div class="stat-card"><div class="val" id="statSignal">WAIT</div><div class="lbl">Última señal</div></div>
-  </section>
-
-  <nav class="tab-bar" id="tabs">
-    <div class="tab active" data-tab="graph">Grafo neuronal</div>
-    <div class="tab" data-tab="transcripts">Transcripciones</div>
-    <div class="tab" data-tab="train">Entrenar</div>
-    <div class="tab" data-tab="predict">Predecir</div>
-    <div class="tab" data-tab="log">Log</div>
-  </nav>
-
-  <main class="panel-wrap">
-    <section class="panel active" id="panel-graph"><canvas id="nnCanvas" width="1200" height="420"></canvas></section>
-
-    <section class="panel" id="panel-transcripts">
-      <div class="section"><div class="label-section">Pegar transcripción</div><textarea id="transcriptInput" placeholder="Pega texto de sesión..."></textarea></div>
-      <div class="controls"><button class="btn-primary" id="extractBtn">Extraer conceptos</button></div>
-      <div class="section" style="margin-top:12px;"><div class="label-section">Keywords relevantes</div><div class="tags" id="conceptTags"></div></div>
-    </section>
-
-    <section class="panel" id="panel-train">
-      <div class="form-grid" id="trainForm"></div>
-      <div class="controls"><button class="btn-primary" id="trainBtn">Entrenar operación</button><button class="btn-ghost" id="batchBtn">Entrenamiento x100</button></div>
-    </section>
-
-    <section class="panel" id="panel-predict">
-      <div class="form-grid" id="predictForm"></div>
-      <div class="controls"><button class="btn-primary" id="predictBtn">Predecir</button></div>
-      <div style="margin-top:16px;">
-        <div class="prob-row"><div class="prob-label">BUY ↑</div><div class="prob-track"><div class="prob-fill prob-buy" id="probBuy" style="width:1%;">0%</div></div></div>
-        <div class="prob-row"><div class="prob-label">WAIT —</div><div class="prob-track"><div class="prob-fill prob-wait" id="probWait" style="width:1%;">0%</div></div></div>
-        <div class="prob-row"><div class="prob-label">SELL ↓</div><div class="prob-track"><div class="prob-fill prob-sell" id="probSell" style="width:1%;">0%</div></div></div>
+<div class="app">
+  <aside class="graph-col">
+    <canvas id="brainCanvas"></canvas>
+    <div class="tooltip" id="tooltip"></div>
+  </aside>
+  <section class="main-col">
+    <header>
+      <div>
+        <div class="text-lg">Living Brain</div>
+        <div class="text-sm">Sistema Neuronal Vivo para Trading Binario</div>
       </div>
-      <div class="signal-card" id="signalCard"><div class="signal-text wait" id="signalText">WAIT</div></div>
-    </section>
+      <div class="stats">
+        <div class="stat"><div class="text-label">Neuronas</div><div class="text-stat" id="statNeurons">0</div></div>
+        <div class="stat"><div class="text-label">Gen</div><div class="text-stat" id="statGen">1</div></div>
+        <div class="stat"><div class="text-label">Velas vistas</div><div class="text-stat" id="statObs">0</div></div>
+      </div>
+    </header>
 
-    <section class="panel" id="panel-log"><div class="log-container" id="log"></div></section>
-  </main>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="teach">Enseñar</button>
+      <button class="tab" data-tab="observe">Observar velas</button>
+      <button class="tab" data-tab="narrative">Narración en vivo</button>
+      <button class="tab" data-tab="neurons">Neuronas</button>
+    </nav>
 
-  <script>
-    const PATTERNS = ['pin bar', 'engulfing', 'doji', 'ruptura', 'retest'];
-    const SESSIONS = ['asia', 'london', 'new york', 'overlap'];
-    const TRENDS = ['bajista', 'lateral', 'alcista'];
-    const VOLS = ['bajo', 'medio', 'alto'];
-    const OUTPUTS = ['BUY', 'WAIT', 'SELL'];
-    const TRADING_KEYWORDS = {
-      'soporte': 2, 'resistencia': 2, 'ruptura': 2, 'pin bar': 3,
-      'engulfing': 3, 'doji': 2, 'rsi': 2, 'volumen': 2,
-      'confluencia': 3, 'entrada': 3, 'retest': 3, 'oversold': 2,
-      'overbought': 2, 'tendencia': 2, 'fibonacci': 2, 'señal': 2
+    <main class="panel-wrap">
+      <section class="panel active" id="panel-teach">
+        <div class="text-label">Transcripción de video</div>
+        <textarea class="tx-area" id="transcript" placeholder="Pega transcripción..."></textarea>
+        <div style="margin-top:10px; display:flex; gap:8px;"><button class="btn-primary" id="btnTranscript">Aprender de transcripción</button></div>
+
+        <div class="text-label" style="margin-top:14px;">Regla manual</div>
+        <div class="rule-row">
+          <input id="ruleInput" class="tx-area" style="min-height:42px" placeholder="Pin bar en soporte con RSI menor a 35 es BUY" />
+          <button class="btn-primary" id="btnRule">Añadir regla</button>
+          <button class="btn-ghost" id="btnEvolve">Evolucionar neuronas</button>
+        </div>
+
+        <div class="text-label" style="margin-top:14px;">Vela histórica + resultado</div>
+        <form class="candle-form" id="trainForm">
+          <div class="field-group"><label>Open</label><input type="number" step="0.01" name="open" value="100" /></div>
+          <div class="field-group"><label>High</label><input type="number" step="0.01" name="high" value="104" /></div>
+          <div class="field-group"><label>Low</label><input type="number" step="0.01" name="low" value="98" /></div>
+          <div class="field-group"><label>Close</label><input type="number" step="0.01" name="close" value="101" /></div>
+          <div class="field-group"><label>RSI</label><input type="number" step="0.1" name="rsi" value="34" /></div>
+          <div class="field-group"><label>Outcome</label><select name="outcome"><option>WIN</option><option>LOSS</option></select></div>
+        </form>
+        <div style="margin-top:8px;"><button class="btn-primary" id="btnCandle">Aprender de vela</button></div>
+      </section>
+
+      <section class="panel" id="panel-observe">
+        <div class="observe-grid">
+          <div class="field-group"><label>Open</label><input type="number" step="0.01" id="obOpen" value="100"></div>
+          <div class="field-group"><label>High</label><input type="number" step="0.01" id="obHigh" value="103"></div>
+          <div class="field-group"><label>Low</label><input type="number" step="0.01" id="obLow" value="97"></div>
+          <div class="field-group"><label>Close</label><input type="number" step="0.01" id="obClose" value="102"></div>
+          <div class="field-group"><label>Volume</label><input type="number" step="1" id="obVolume" value="1200"></div>
+          <div class="field-group"><label>RSI</label><input type="number" step="0.1" id="obRsi" value="30"></div>
+          <div class="field-group"><label>Session</label><select id="obSession"><option>asia</option><option>london</option><option>newyork</option></select></div>
+          <div class="field-group"><label>Trend</label><select id="obTrend"><option>bullish</option><option>neutral</option><option>bearish</option></select></div>
+        </div>
+        <div style="margin-top:10px; display:flex; gap:8px;"><button class="btn-primary" id="btnObserve">Observar vela</button><button class="btn-ghost" id="btnWin">Feedback WIN</button><button class="btn-ghost" id="btnLoss">Feedback LOSS</button></div>
+        <div style="margin-top:12px;"><div class="signal-badge wait" id="signalBadge"><span class="confidence-fill" id="confidenceFill" style="width:0%"></span><span id="signalText">WAIT · 0%</span></div></div>
+      </section>
+
+      <section class="panel" id="panel-narrative">
+        <div class="narrative-panel">
+          <div class="narrative-history" id="narrativeHistory">Sin historial.</div>
+          <div class="narrative-text narrative" id="narrativeText"></div>
+        </div>
+        <div class="log" id="log" style="margin-top:12px;"></div>
+      </section>
+
+      <section class="panel" id="panel-neurons">
+        <div id="neuronsList"></div>
+      </section>
+    </main>
+  </section>
+</div>
+
+<script>
+const NARRATIVE_TEMPLATES = {
+  pinBar: 'Veo una mecha {direction} prominente. El precio rechazó {zone}.',
+  engulfing: 'Vela envolvente {direction}. La presión {side} domina.',
+  rsiExtreme: 'RSI en zona {zone} ({value}). El precio podría {action}.',
+  confluence: 'Confluencia de {count} señales en la misma dirección.',
+  noPattern: 'Sin patrón claro. El mercado está en indecisión.',
+  warning: 'Zona de riesgo. {reason}. Mejor esperar confirmación.',
+  signal: '{signal} con {confidence}% de confianza basado en {neurons} neuronas.'
+};
+
+class LivingBrain {
+  constructor() {
+    this.neurons = new Map();
+    this.generation = 1;
+    this.observations = 0;
+    this.pendingPatterns = [];
+    this.consolidationThreshold = 3;
+    this.lastActivated = [];
+    this.contextHistory = new Map();
+  }
+
+  extractFeatures(c) {
+    const body = Math.max(0.0001, Math.abs(c.close - c.open));
+    const range = Math.max(0.0001, c.high - c.low);
+    const upperWick = c.high - Math.max(c.open, c.close);
+    const lowerWick = Math.min(c.open, c.close) - c.low;
+    return {
+      bodyRatio: body / range,
+      wickUpper: upperWick / body,
+      wickLower: lowerWick / body,
+      trend: c.trend || (c.close > c.open ? 'bullish' : c.close < c.open ? 'bearish' : 'neutral'),
+      rsi: c.rsi ?? 50,
+      rsiRange: { min: Math.max(0, (c.rsi ?? 50) - 8), max: Math.min(100, (c.rsi ?? 50) + 8) },
+      session: c.session || 'asia'
     };
+  }
 
-    class NeuralNet {
-      constructor(layers) {
-        this.layers = layers;
-        this.weights = [];
-        this.biases = [];
-        this._acts = [];
-        for (let l = 1; l < layers.length; l++) {
-          const inSize = layers[l - 1], outSize = layers[l];
-          const w = Array.from({ length: outSize }, () =>
-            Array.from({ length: inSize }, () => (Math.random() - 0.5) * 0.8)
-          );
-          const b = Array.from({ length: outSize }, () => 0);
-          this.weights.push(w);
-          this.biases.push(b);
-        }
-      }
+  makeNeuron({ name, type, triggers, weight, description, signal, generation = 1 }) {
+    const id = `n_${String(this.neurons.size + 1).padStart(3, '0')}`;
+    return { id, born: Date.now(), name, type, triggers, weight, activations: 0, correctPredictions: 0, connections: [], description, signal, confidence: weight, generation };
+  }
 
-      relu(x) { return Math.max(0, x); }
-      drelu(x) { return x > 0 ? 1 : 0; }
-
-      softmax(z) {
-        const m = Math.max(...z);
-        const exps = z.map(v => Math.exp(v - m));
-        const sum = exps.reduce((a, b) => a + b, 0);
-        return exps.map(v => v / sum);
-      }
-
-      forward(input) {
-        let a = [...input];
-        this._acts = [a];
-        this._zs = [];
-        for (let l = 0; l < this.weights.length; l++) {
-          const z = this.weights[l].map((row, i) => row.reduce((acc, w, j) => acc + w * a[j], this.biases[l][i]));
-          this._zs.push(z);
-          a = l === this.weights.length - 1 ? this.softmax(z) : z.map(v => this.relu(v));
-          this._acts.push(a);
-        }
-        return a;
-      }
-
-      train(input, target, lr = 0.04) {
-        const out = this.forward(input);
-        const deltas = new Array(this.weights.length);
-        deltas[deltas.length - 1] = out.map((v, i) => v - target[i]);
-
-        for (let l = this.weights.length - 2; l >= 0; l--) {
-          const nextDelta = deltas[l + 1];
-          const nextW = this.weights[l + 1];
-          const z = this._zs[l];
-          deltas[l] = z.map((val, i) => {
-            let sum = 0;
-            for (let k = 0; k < nextW.length; k++) sum += nextW[k][i] * nextDelta[k];
-            return sum * this.drelu(val);
-          });
-        }
-
-        for (let l = 0; l < this.weights.length; l++) {
-          const aPrev = this._acts[l];
-          for (let i = 0; i < this.weights[l].length; i++) {
-            for (let j = 0; j < this.weights[l][i].length; j++) {
-              this.weights[l][i][j] -= lr * deltas[l][i] * aPrev[j];
-            }
-            this.biases[l][i] -= lr * deltas[l][i];
-          }
-        }
-        return -target.reduce((acc, t, i) => acc + t * Math.log((out[i] || 1e-8) + 1e-8), 0);
-      }
-    }
-
-    function encodeInput(pattern, session, rsi, trend, vol) {
-      const r = parseFloat(rsi);
-      return [
-        PATTERNS.indexOf(pattern) / 4,
-        SESSIONS.indexOf(session) / 3,
-        r / 100,
-        TRENDS.indexOf(trend) / 2,
-        VOLS.indexOf(vol) / 2,
-        r < 30 ? 1 : 0,
-        r > 70 ? 1 : 0
-      ];
-    }
-
-    const NET = new NeuralNet([7, 12, 8, 3]);
-    const metrics = { samples: 0, trains: 0, wins: 0, losses: 0, lastSignal: 'WAIT' };
-
-    function createForm(hostId, includeResult) {
-      const host = document.getElementById(hostId);
-      const fields = [
-        ['Patrón', `<select id="${hostId}-pattern">${PATTERNS.map(v => `<option>${v}</option>`).join('')}</select>`],
-        ['Sesión', `<select id="${hostId}-session">${SESSIONS.map(v => `<option>${v}</option>`).join('')}</select>`],
-        ['RSI', `<input id="${hostId}-rsi" type="number" min="0" max="100" value="50" />`],
-        ['Tendencia', `<select id="${hostId}-trend">${TRENDS.map(v => `<option>${v}</option>`).join('')}</select>`],
-        ['Volumen', `<select id="${hostId}-vol">${VOLS.map(v => `<option>${v}</option>`).join('')}</select>`]
-      ];
-      if (includeResult) fields.push(['Resultado', `<select id="${hostId}-result"><option>WIN</option><option>LOSS</option></select>`]);
-      host.innerHTML = fields.map(([lbl, el]) => `<div><div class="label-section">${lbl}</div>${el}</div>`).join('');
-    }
-
-    createForm('trainForm', true);
-    createForm('predictForm', false);
-
-    function getFormData(hostId, includeResult) {
-      const pattern = document.getElementById(`${hostId}-pattern`).value;
-      const session = document.getElementById(`${hostId}-session`).value;
-      const rsi = document.getElementById(`${hostId}-rsi`).value;
-      const trend = document.getElementById(`${hostId}-trend`).value;
-      const vol = document.getElementById(`${hostId}-vol`).value;
-      const data = { pattern, session, rsi, trend, vol, input: encodeInput(pattern, session, rsi, trend, vol) };
-      if (includeResult) data.result = document.getElementById(`${hostId}-result`).value;
-      return data;
-    }
-
-    function addLog(type, txt) {
-      const node = document.createElement('div');
-      node.className = 'log-line';
-      const time = new Date().toLocaleTimeString();
-      node.innerHTML = `<span class="log-time">[${time}]</span><span class="${type}">${txt}</span>`;
-      const log = document.getElementById('log');
-      log.prepend(node);
-    }
-
-    function updateStats() {
-      document.getElementById('statSamples').textContent = String(metrics.samples);
-      document.getElementById('statTrain').textContent = String(metrics.trains);
-      const total = metrics.wins + metrics.losses;
-      const acc = total ? (metrics.wins / total) * 100 : 0;
-      const accEl = document.getElementById('statAcc');
-      accEl.textContent = `${acc.toFixed(1)}%`;
-      accEl.style.color = acc < 50 ? 'var(--accent-red)' : acc <= 70 ? 'var(--accent-amber)' : 'var(--accent-green)';
-      document.getElementById('statSignal').textContent = metrics.lastSignal;
-    }
-
-    function drawGraph() {
-      const canvas = document.getElementById('nnCanvas');
-      const ctx = canvas.getContext('2d');
-      const w = canvas.width, h = canvas.height;
-      canvas.style.opacity = '0';
-      requestAnimationFrame(() => canvas.style.opacity = '1');
-      ctx.clearRect(0, 0, w, h);
-
-      const cols = [0.08, 0.33, 0.58, 0.83];
-      const layerColors = ['#1D9E75', '#7F77DD', '#BA7517', '#D85A30'];
-      const inputLabels = ['Pat','Ses','RSI','Tend','Vol','OS','OB'];
-      const outputLabels = ['BUY ↑', 'WAIT —', 'SELL ↓'];
-
-      const positions = NET.layers.map((n, l) => {
-        const cx = cols[l] * w;
-        return Array.from({ length: n }, (_, i) => {
-          const t = n === 1 ? 0.5 : i / (n - 1);
-          const cy = h * (0.15 + t * 0.7);
-          return { x: cx, y: cy };
-        });
+  learnFromTranscript(text) {
+    const lines = text.split(/[.!?\n]/).map(s => s.trim()).filter(Boolean);
+    const verbs = /significa|indica|señal|es alcista|es bajista|cuando|si el precio|buscar entrada|confirma/i;
+    let created = 0;
+    lines.forEach((line) => {
+      if (!verbs.test(line)) return;
+      const signal = /sell|bajista/i.test(line) ? 'SELL' : /buy|alcista/i.test(line) ? 'BUY' : 'WAIT';
+      const rsiMatch = line.match(/rsi\s*(?:menor|<)\s*(\d+)|rsi\s*(?:mayor|>)\s*(\d+)/i);
+      const rsi = rsiMatch ? Number(rsiMatch[1] || rsiMatch[2]) : 50;
+      const neuron = this.makeNeuron({
+        name: `Concepto video ${this.neurons.size + 1}`,
+        type: 'concept',
+        triggers: { bodyRatio: { min: 0, max: 0.45 }, trend: signal === 'BUY' ? 'bullish' : signal === 'SELL' ? 'bearish' : 'neutral', rsiRange: { min: Math.max(0, rsi - 12), max: Math.min(100, rsi + 12) } },
+        weight: 0.5,
+        description: line,
+        signal
       });
+      neuron.source = 'video';
+      this.neurons.set(neuron.id, neuron);
+      dispatchEvent(new CustomEvent('neuron:born', { detail: neuron }));
+      created += 1;
+    });
+    return created;
+  }
 
-      for (let l = 0; l < NET.weights.length; l++) {
-        for (let i = 0; i < NET.weights[l].length; i++) {
-          for (let j = 0; j < NET.weights[l][i].length; j++) {
-            const weight = NET.weights[l][i][j];
-            const alpha = Math.min(0.6, Math.abs(weight) * 0.7);
-            ctx.strokeStyle = weight > 0 ? `rgba(29,158,117,${alpha})` : `rgba(216,90,48,${alpha})`;
-            ctx.lineWidth = Math.min(2, Math.abs(weight) * 1.5);
-            ctx.beginPath();
-            ctx.moveTo(positions[l][j].x, positions[l][j].y);
-            ctx.lineTo(positions[l + 1][i].x, positions[l + 1][i].y);
-            ctx.stroke();
-          }
-        }
+  learnFromRule(text) {
+    const signal = /\bBUY\b|alcista/i.test(text) ? 'BUY' : /\bSELL\b|bajista/i.test(text) ? 'SELL' : 'WAIT';
+    const rsi = text.match(/rsi\s*(?:menor|<)\s*(\d+)|rsi\s*(?:mayor|>)\s*(\d+)/i);
+    const trend = /alcista/i.test(text) ? 'bullish' : /bajista/i.test(text) ? 'bearish' : 'neutral';
+    const neuron = this.makeNeuron({
+      name: text.slice(0, 26),
+      type: 'rule',
+      triggers: { bodyRatio: { min: 0, max: /pin bar|doji/i.test(text) ? 0.3 : 0.6 }, wickLower: { min: /pin bar/i.test(text) ? 2 : 0 }, trend, rsiRange: { min: Math.max(0, Number((rsi && (rsi[1] || rsi[2])) || 50) - 8), max: Math.min(100, Number((rsi && (rsi[1] || rsi[2])) || 50) + 8) } },
+      weight: 0.7,
+      description: text,
+      signal
+    });
+    this.neurons.set(neuron.id, neuron);
+    dispatchEvent(new CustomEvent('neuron:born', { detail: neuron }));
+    return neuron;
+  }
+
+  findMatchingNeuron(features) {
+    for (const n of this.neurons.values()) {
+      const s = this.matchScore(n.triggers, features);
+      if (s > 0.75) return n;
+    }
+    return null;
+  }
+
+  learnFromCandle(candleData, outcome) {
+    const features = this.extractFeatures(candleData);
+    const matching = this.findMatchingNeuron(features);
+    if (matching) {
+      matching.weight = Math.min(1, Math.max(0, matching.weight + (outcome === 'WIN' ? 0.05 : -0.03)));
+      matching.correctPredictions += outcome === 'WIN' ? 1 : 0;
+      matching.confidence = matching.weight;
+      return { reinforced: matching.id };
+    }
+    this.pendingPatterns.push({ features, outcome, timestamp: Date.now() });
+    return this.checkForNewNeurons();
+  }
+
+  similarity(a, b) {
+    return Math.abs(a - b) <= 0.1;
+  }
+
+  checkForNewNeurons() {
+    const groups = [];
+    this.pendingPatterns.forEach((p) => {
+      let g = groups.find(gr => this.similarity(gr.ref.bodyRatio, p.features.bodyRatio) && this.similarity(gr.ref.wickLower, p.features.wickLower));
+      if (!g) {
+        g = { ref: p.features, items: [] };
+        groups.push(g);
       }
+      g.items.push(p);
+    });
+    for (const g of groups) {
+      const wins = g.items.filter(i => i.outcome === 'WIN').length;
+      if (g.items.length >= this.consolidationThreshold && wins >= Math.ceil(g.items.length / 2)) {
+        const neuron = this.birthNeuron({ features: g.ref, signal: wins / g.items.length > 0.6 ? 'BUY' : 'WAIT', description: 'Patrón consolidado desde velas históricas' });
+        this.pendingPatterns = this.pendingPatterns.filter(i => !g.items.includes(i));
+        return { born: neuron.id };
+      }
+    }
+    return { pending: this.pendingPatterns.length };
+  }
 
-      for (let l = 0; l < positions.length; l++) {
-        positions[l].forEach((p, i) => {
-          ctx.fillStyle = layerColors[l];
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
-          ctx.fill();
-          const acts = NET._acts[l] || [];
-          if (acts[i] != null) {
-            ctx.fillStyle = 'rgba(232,230,223,.7)';
-            ctx.font = '10px JetBrains Mono';
-            ctx.fillText(acts[i].toFixed(2), p.x + 12, p.y + 3);
-          }
-          if (l === 0) {
-            ctx.fillStyle = '#8a8880';
-            ctx.font = '11px JetBrains Mono';
-            ctx.fillText(inputLabels[i], p.x - 38, p.y + 3);
-          }
-          if (l === positions.length - 1) {
-            ctx.fillStyle = '#8a8880';
-            ctx.font = '11px JetBrains Mono';
-            ctx.fillText(outputLabels[i], p.x + 16, p.y + 3);
-          }
+  birthNeuron(pattern) {
+    const neuron = this.makeNeuron({
+      name: `Mecha ${pattern.signal === 'BUY' ? 'Alcista' : pattern.signal === 'SELL' ? 'Bajista' : 'Mixta'} RSI`,
+      type: 'pattern',
+      triggers: pattern.features,
+      weight: 0.6,
+      description: pattern.description,
+      signal: pattern.signal,
+      generation: pattern.generation || 1
+    });
+    this.neurons.set(neuron.id, neuron);
+    dispatchEvent(new CustomEvent('neuron:born', { detail: neuron }));
+    return neuron;
+  }
+
+  evolveNeurons() {
+    const daughters = [];
+    for (const neuron of this.neurons.values()) {
+      if (neuron.weight > 0.88 && neuron.activations > 5 && neuron.generation < 3) {
+        const daughter = this.birthNeuron({
+          features: { ...neuron.triggers, trend: neuron.triggers.trend === 'bullish' ? 'bullish' : neuron.triggers.trend === 'bearish' ? 'bearish' : 'neutral' },
+          signal: neuron.signal,
+          description: `Meta-neurona derivada de ${neuron.name}`,
+          generation: neuron.generation + 1
+        });
+        neuron.connections.push(daughter.id);
+        daughter.type = 'meta';
+        daughter.weight = Math.min(1, neuron.weight - 0.05);
+        daughters.push(daughter.id);
+      }
+    }
+    if (daughters.length) this.generation = Math.max(this.generation, ...daughters.map(id => this.neurons.get(id).generation));
+    return daughters;
+  }
+
+  matchScore(triggers, f) {
+    let score = 0;
+    let total = 0;
+    if (triggers.bodyRatio) { total += 1; score += (f.bodyRatio >= (triggers.bodyRatio.min ?? 0) && f.bodyRatio <= (triggers.bodyRatio.max ?? 1)) ? 1 : 0; }
+    if (triggers.wickLower) { total += 1; score += f.wickLower >= (triggers.wickLower.min ?? 0) ? 1 : 0; }
+    if (triggers.trend) { total += 1; score += f.trend === triggers.trend ? 1 : 0; }
+    if (triggers.rsiRange) { total += 1; score += (f.rsi >= triggers.rsiRange.min && f.rsi <= triggers.rsiRange.max) ? 1 : 0; }
+    return total ? score / total : 0;
+  }
+
+  resolveSignal(activated) {
+    if (!activated.length) return 'WAIT';
+    const tally = { BUY: 0, SELL: 0, WAIT: 0 };
+    activated.forEach(({ neuron, score }) => tally[neuron.signal || 'WAIT'] += score * neuron.weight);
+    return Object.entries(tally).sort((a,b) => b[1] - a[1])[0][0];
+  }
+
+  computeConfidence(activated) {
+    if (!activated.length) return 0;
+    const top = activated.slice(0, 4).reduce((acc, x) => acc + (x.score * x.neuron.weight), 0) / Math.min(4, activated.length);
+    return Math.min(0.99, top);
+  }
+
+  generateNarrative(activated, features) {
+    if (!activated.length) return 'Vela sin patrón reconocido. Mercado en equilibrio. Sin señal.';
+    if (activated.length <= 2) {
+      const n = activated[0].neuron;
+      return `Detecto ${n.name}. ${n.description}. Confianza moderada.`;
+    }
+    const names = activated.slice(0, 3).map(x => x.neuron.name).join(' + ');
+    const direction = features.trend === 'bullish' ? 'alcista' : features.trend === 'bearish' ? 'bajista' : 'lateral';
+    return `Confluencia detectada: ${names}. ${NARRATIVE_TEMPLATES.confluence.replace('{count}', activated.length)} El mercado muestra contexto ${direction}.`;
+  }
+
+  observeCandle(candleData) {
+    this.observations += 1;
+    const features = this.extractFeatures(candleData);
+    const activated = [];
+    for (const neuron of this.neurons.values()) {
+      const score = this.matchScore(neuron.triggers, features);
+      if (score > 0.6) {
+        neuron.activations += 1;
+        activated.push({ neuron, score });
+        (this.contextHistory.get(neuron.id) || this.contextHistory.set(neuron.id, []).get(neuron.id)).push(features.trend);
+        neuron.connections.forEach((connId) => {
+          const conn = this.neurons.get(connId);
+          if (conn) activated.push({ neuron: conn, score: score * 0.8, chained: true, from: neuron.id, to: connId });
         });
       }
     }
+    activated.sort((a, b) => b.score - a.score);
+    this.lastActivated = activated;
+    const signal = this.resolveSignal(activated);
+    const confidence = this.computeConfidence(activated);
+    return { activated, narrative: this.generateNarrative(activated, features), signal, confidence };
+  }
 
-    function extractKeywords() {
-      const text = document.getElementById('transcriptInput').value.toLowerCase();
-      const rows = Object.entries(TRADING_KEYWORDS).map(([word, w]) => {
-        const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const m = text.match(new RegExp(escaped, 'g'));
-        const count = m ? m.length : 0;
-        return { word, score: count * w, count };
-      }).filter(r => r.score > 0).sort((a, b) => b.score - a.score);
-      const wrap = document.getElementById('conceptTags');
-      wrap.innerHTML = rows.length ? rows.map(r => `<span class="concept-tag">${r.word} · ${r.score}</span>`).join('') : '<span class="label-section">Sin conceptos detectados</span>';
-      addLog('log-info', `Transcripción procesada: ${rows.length} keywords detectadas.`);
+  receiveOutcome(outcome) {
+    this.lastActivated.forEach(({ neuron }) => {
+      neuron.weight = Math.min(1, Math.max(0, neuron.weight + (outcome === 'WIN' ? 0.03 : -0.03)));
+      neuron.correctPredictions += outcome === 'WIN' ? 1 : 0;
+      neuron.confidence = neuron.weight;
+    });
+  }
+
+  exportState() {
+    return {
+      generation: this.generation,
+      observations: this.observations,
+      pendingPatterns: this.pendingPatterns,
+      neurons: Array.from(this.neurons.values())
+    };
+  }
+
+  importState(state) {
+    if (!state) return;
+    this.generation = state.generation || 1;
+    this.observations = state.observations || 0;
+    this.pendingPatterns = state.pendingPatterns || [];
+    this.neurons = new Map((state.neurons || []).map(n => [n.id, n]));
+  }
+
+  getGraphData() {
+    return {
+      nodes: Array.from(this.neurons.values()),
+      edges: Array.from(this.neurons.values()).flatMap(n => n.connections.map(to => ({ from: n.id, to })))
+    };
+  }
+}
+
+const brain = new LivingBrain();
+const storageKey = 'living-brain-state-v1';
+brain.importState(JSON.parse(localStorage.getItem(storageKey) || 'null'));
+
+const nodesSim = new Map();
+const birthAnimations = [];
+const particles = [];
+const firingDots = [];
+const canvas = document.getElementById('brainCanvas');
+const ctx = canvas.getContext('2d');
+const tooltip = document.getElementById('tooltip');
+let hoveredNode = null;
+
+function colorForGen(g) { return g === 1 ? '#1DB584' : g === 2 ? '#7B6FE8' : '#E8A020'; }
+function alpha(hex, a) { const h = hex.replace('#', ''); const n = parseInt(h, 16); return `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, ${a})`; }
+
+function syncNodes() {
+  const { nodes } = brain.getGraphData();
+  const ids = new Set(nodes.map(n => n.id));
+  nodes.forEach((n) => {
+    if (!nodesSim.has(n.id)) nodesSim.set(n.id, { id: n.id, x: canvas.width / 2, y: canvas.height / 2, vx: 0, vy: 0, pulse: 0 });
+  });
+  Array.from(nodesSim.keys()).forEach((id) => { if (!ids.has(id)) nodesSim.delete(id); });
+}
+
+addEventListener('neuron:born', (e) => {
+  syncNodes();
+  const n = nodesSim.get(e.detail.id);
+  n.x = canvas.width / 2; n.y = canvas.height / 2; n.vx = (Math.random() - 0.5) * 4; n.vy = (Math.random() - 0.5) * 4;
+  birthAnimations.push({ id: e.detail.id, start: performance.now() });
+  for (let i = 0; i < 8; i++) particles.push({ x: n.x, y: n.y, vx: (Math.random() - 0.5) * 4, vy: (Math.random() - 0.5) * 4, life: 1, color: colorForGen(e.detail.generation) });
+  saveState();
+  renderNeuronsList();
+  renderStats();
+});
+
+function runPhysics() {
+  const arr = Array.from(nodesSim.values());
+  for (let i = 0; i < arr.length; i++) {
+    for (let j = i + 1; j < arr.length; j++) {
+      const a = arr[i], b = arr[j];
+      let dx = b.x - a.x, dy = b.y - a.y;
+      const d = Math.max(1, Math.hypot(dx, dy));
+      const rep = 1200 / (d * d);
+      const fx = (dx / d) * rep, fy = (dy / d) * rep;
+      a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
     }
+  }
+  brain.getGraphData().edges.forEach((e) => {
+    const a = nodesSim.get(e.from), b = nodesSim.get(e.to); if (!a || !b) return;
+    const dx = b.x - a.x, dy = b.y - a.y; const d = Math.max(1, Math.hypot(dx, dy));
+    const spring = (d - 110) * 0.0018;
+    const fx = (dx / d) * spring, fy = (dy / d) * spring;
+    a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+  });
+  arr.forEach((n) => {
+    n.vx += (canvas.width / 2 - n.x) * 0.0006;
+    n.vy += (canvas.height / 2 - n.y) * 0.0006;
+    n.vx *= 0.85; n.vy *= 0.85;
+    n.x += n.vx; n.y += n.vy;
+    n.x = Math.max(22, Math.min(canvas.width - 22, n.x));
+    n.y = Math.max(22, Math.min(canvas.height - 22, n.y));
+  });
+}
 
-    function predictAndRender(data) {
-      const out = NET.forward(data.input);
-      const pct = out.map(v => Math.round(v * 1000) / 10);
-      ['Buy','Wait','Sell'].forEach((k, i) => {
-        const el = document.getElementById(`prob${k}`);
-        el.style.width = `${Math.max(1, pct[i])}%`;
-        el.textContent = `${pct[i].toFixed(1)}%`;
-      });
-      const idx = out.indexOf(Math.max(...out));
-      const signal = OUTPUTS[idx];
-      metrics.lastSignal = signal;
-      const signalCard = document.getElementById('signalCard');
-      signalCard.className = `signal-card ${signal === 'BUY' ? 'buy' : signal === 'SELL' ? 'sell' : ''}`;
-      const textEl = document.getElementById('signalText');
-      textEl.className = `signal-text ${signal.toLowerCase()}`;
-      textEl.textContent = signal;
-      updateStats();
-      addLog('log-info', `Predicción: ${signal} (${pct.map(v => v.toFixed(1)).join('% / ')}%).`);
-      drawGraph();
-      return signal;
+function drawGraph(now) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const data = brain.getGraphData();
+  runPhysics();
+
+  data.edges.forEach((e) => {
+    const a = nodesSim.get(e.from), b = nodesSim.get(e.to); if (!a || !b) return;
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  });
+
+  brain.lastActivated.filter(x => x.chained).forEach((a) => {
+    firingDots.push({ from: a.from, to: a.to, start: now, dur: 300 });
+  });
+
+  for (let i = firingDots.length - 1; i >= 0; i--) {
+    const f = firingDots[i]; const a = nodesSim.get(f.from), b = nodesSim.get(f.to);
+    if (!a || !b) { firingDots.splice(i, 1); continue; }
+    const t = (now - f.start) / f.dur; if (t > 1) { firingDots.splice(i, 1); continue; }
+    const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+    ctx.fillStyle = 'rgba(0,229,160,0.7)'; ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+  }
+
+  data.nodes.forEach((node) => {
+    const sim = nodesSim.get(node.id); if (!sim) return;
+    let radius = 8 + (node.weight * 6);
+    const color = colorForGen(node.generation);
+    const b = birthAnimations.find(x => x.id === node.id);
+    if (b) {
+      const t = (now - b.start) / 500;
+      if (t >= 1) birthAnimations.splice(birthAnimations.indexOf(b), 1);
+      else radius = t < 0.4 ? 30 * (t / 0.4) : (8 + node.weight * 6) + Math.sin(t * 20) * 2;
     }
+    const active = brain.lastActivated.find(x => x.neuron.id === node.id);
+    if (active) {
+      const pulse = Math.sin((now % 400) / 400 * Math.PI);
+      radius += pulse * 8;
+    }
+    ctx.shadowBlur = active ? 40 : 12;
+    ctx.shadowColor = alpha(color, active ? 0.8 : 0.4);
+    ctx.fillStyle = active ? 'rgba(0,229,160,0.7)' : alpha(color, 0.85);
+    ctx.strokeStyle = alpha(color, 0.6);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(sim.x, sim.y, radius, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  });
+  ctx.shadowBlur = 0;
 
-    document.getElementById('extractBtn').addEventListener('click', extractKeywords);
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i]; p.life -= 0.02; p.x += p.vx; p.y += p.vy;
+    ctx.fillStyle = alpha(p.color, Math.max(0, p.life));
+    ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, Math.PI * 2); ctx.fill();
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
 
-    document.getElementById('trainBtn').addEventListener('click', () => {
-      const btn = document.getElementById('trainBtn');
-      btn.classList.add('loading');
-      btn.textContent = 'Entrenando...';
-      const data = getFormData('trainForm', true);
-      const target = data.result === 'WIN' ? [1,0,0] : [0,0,1];
-      const loss = NET.train(data.input, target, 0.04);
-      metrics.samples += 1;
-      metrics.trains += 1;
-      if (data.result === 'WIN') metrics.wins += 1; else metrics.losses += 1;
-      updateStats();
-      drawGraph();
-      addLog('log-ok', `Entrenada operación (${data.result}) con loss ${loss.toFixed(4)}.`);
-      setTimeout(() => { btn.classList.remove('loading'); btn.textContent = 'Entrenar operación'; }, 250);
-    });
+function frame(ts) { drawGraph(ts); requestAnimationFrame(frame); }
 
-    document.getElementById('batchBtn').addEventListener('click', () => {
-      const data = getFormData('trainForm', true);
-      const target = data.result === 'WIN' ? [1,0,0] : [0,0,1];
-      for (let i = 0; i < 100; i++) NET.train(data.input, target, 0.04);
-      metrics.samples += 100;
-      metrics.trains += 100;
-      if (data.result === 'WIN') metrics.wins += 100; else metrics.losses += 100;
-      updateStats();
-      drawGraph();
-      addLog('log-warn', 'Entrenamiento intensivo x100 completado.');
-    });
+function resizeCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.floor(canvas.clientWidth * dpr);
+  canvas.height = Math.floor(canvas.clientHeight * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  syncNodes();
+}
+window.addEventListener('resize', resizeCanvas);
 
-    document.getElementById('predictBtn').addEventListener('click', () => {
-      const data = getFormData('predictForm', false);
-      predictAndRender(data);
-    });
+function saveState() { localStorage.setItem(storageKey, JSON.stringify(brain.exportState())); }
 
-    document.getElementById('tabs').addEventListener('click', (e) => {
-      const tab = e.target.closest('.tab');
-      if (!tab) return;
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-      document.getElementById(`panel-${tab.dataset.tab}`).classList.add('active');
-      if (tab.dataset.tab === 'graph') drawGraph();
-    });
+function addLog(text) {
+  const log = document.getElementById('log');
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
+  log.prepend(line);
+}
 
-    addLog('log-info', 'Trading Brain inicializado.');
-    updateStats();
-    predictAndRender(getFormData('predictForm', false));
-  </script>
+function renderStats() {
+  document.getElementById('statNeurons').textContent = brain.neurons.size;
+  document.getElementById('statGen').textContent = brain.generation;
+  document.getElementById('statObs').textContent = brain.observations;
+}
+
+function renderNeuronsList() {
+  const host = document.getElementById('neuronsList');
+  const items = Array.from(brain.neurons.values());
+  if (!items.length) { host.innerHTML = '<div class="text-sm">El cerebro nace vacío. Aún no hay neuronas.</div>'; return; }
+  host.innerHTML = items.map(n => `<div class="neuron-item"><span class="neuron-orb" style="color:${colorForGen(n.generation)};background:${colorForGen(n.generation)}"></span><div style="flex:1"><div class="text-base">${n.name}</div><div class="text-sm">${n.type} · act:${n.activations} · señal:${n.signal || 'null'}</div><div class="weight-bar"><div class="weight-fill" style="width:${Math.round(n.weight*100)}%"></div></div></div></div>`).join('');
+}
+
+let typingToken = 0;
+function typeNarrative(text) {
+  const history = document.getElementById('narrativeHistory');
+  const current = document.getElementById('narrativeText').textContent.trim();
+  if (current) history.textContent = current;
+  const el = document.getElementById('narrativeText');
+  const token = ++typingToken;
+  let idx = 0;
+  const step = () => {
+    if (token !== typingToken) return;
+    el.innerHTML = `${text.slice(0, idx)}<span class="narrative-cursor"></span>`;
+    idx += 1;
+    if (idx <= text.length) setTimeout(step, 18);
+  };
+  step();
+}
+
+function getObserveCandle() {
+  return {
+    open: Number(document.getElementById('obOpen').value),
+    high: Number(document.getElementById('obHigh').value),
+    low: Number(document.getElementById('obLow').value),
+    close: Number(document.getElementById('obClose').value),
+    volume: Number(document.getElementById('obVolume').value),
+    rsi: Number(document.getElementById('obRsi').value),
+    session: document.getElementById('obSession').value,
+    trend: document.getElementById('obTrend').value
+  };
+}
+
+function updateSignal(signal, confidence) {
+  const badge = document.getElementById('signalBadge');
+  badge.className = `signal-badge ${signal.toLowerCase()}`;
+  document.getElementById('signalText').textContent = `${signal} · ${Math.round(confidence * 100)}%`;
+  document.getElementById('confidenceFill').style.width = `${Math.round(confidence * 100)}%`;
+}
+
+document.getElementById('btnTranscript').onclick = () => {
+  const text = document.getElementById('transcript').value;
+  const created = brain.learnFromTranscript(text);
+  addLog(`Transcripción procesada. Neuronas concepto creadas: ${created}.`);
+  renderStats(); renderNeuronsList(); saveState();
+};
+
+document.getElementById('btnRule').onclick = () => {
+  const t = document.getElementById('ruleInput').value.trim();
+  if (!t) return addLog('Regla vacía, no se creó neurona.');
+  brain.learnFromRule(t);
+  addLog(`Regla aprendida: ${t}`);
+  renderStats(); renderNeuronsList(); saveState();
+};
+
+document.getElementById('btnCandle').onclick = () => {
+  const fd = new FormData(document.getElementById('trainForm'));
+  const c = Object.fromEntries(fd.entries());
+  ['open', 'high', 'low', 'close', 'rsi'].forEach(k => c[k] = Number(c[k]));
+  const res = brain.learnFromCandle(c, c.outcome);
+  addLog(`Vela histórica aprendida (${c.outcome}). Resultado: ${JSON.stringify(res)}.`);
+  renderStats(); renderNeuronsList(); saveState();
+};
+
+document.getElementById('btnObserve').onclick = () => {
+  const res = brain.observeCandle(getObserveCandle());
+  typeNarrative(res.narrative);
+  updateSignal(res.signal, res.confidence);
+  addLog(`Observación -> señal ${res.signal} (${Math.round(res.confidence * 100)}%).`);
+  renderStats(); renderNeuronsList(); saveState();
+};
+
+document.getElementById('btnWin').onclick = () => { brain.receiveOutcome('WIN'); addLog('Feedback WIN recibido. Pesos reforzados.'); renderNeuronsList(); saveState(); };
+document.getElementById('btnLoss').onclick = () => { brain.receiveOutcome('LOSS'); addLog('Feedback LOSS recibido. Pesos reducidos.'); renderNeuronsList(); saveState(); };
+document.getElementById('btnEvolve').onclick = () => { const d = brain.evolveNeurons(); addLog(`Evolución ejecutada. Hijas creadas: ${d.length}.`); renderStats(); renderNeuronsList(); saveState(); };
+
+document.getElementById('tabs').onclick = (e) => {
+  const btn = e.target.closest('.tab');
+  if (!btn) return;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById(`panel-${btn.dataset.tab}`).classList.add('active');
+};
+
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  hoveredNode = null;
+  for (const node of brain.neurons.values()) {
+    const sim = nodesSim.get(node.id); if (!sim) continue;
+    const r = 8 + node.weight * 6;
+    if (Math.hypot(sim.x - x, sim.y - y) <= r + 5) { hoveredNode = { node, x: sim.x, y: sim.y }; break; }
+  }
+  if (hoveredNode) {
+    tooltip.style.opacity = 1;
+    tooltip.style.left = `${hoveredNode.x}px`;
+    tooltip.style.top = `${hoveredNode.y}px`;
+    tooltip.innerHTML = `<div>${hoveredNode.node.name}</div><div>Gen ${hoveredNode.node.generation} · act ${hoveredNode.node.activations}</div><div class="weight-mini"><span style="width:${hoveredNode.node.weight * 100}%"></span></div>`;
+  } else tooltip.style.opacity = 0;
+});
+
+resizeCanvas();
+syncNodes();
+renderStats();
+renderNeuronsList();
+addLog('Living Brain inicializado. Estado cargado desde localStorage.');
+requestAnimationFrame(frame);
+</script>
 </body>
 </html>
