@@ -128,6 +128,7 @@
         <button class="btn-ghost" id="btnSurvivalReport">Ver Reporte Detallado</button>
         <button class="btn-ghost" id="btnExportPro">📥 Exportar Patrones Pro</button>
         <button class="btn-ghost btn-warning" id="btnPruneNoise">🧹 Purgar Ruido</button>
+        <button class="btn-ghost btn-warning" id="btnRadicalPurge">🚨 Purga Radical 0.50</button>
       </div>
       <div class="text-sm" id="testModeHint">Modo actual: —</div>
     </header>
@@ -810,6 +811,26 @@ class LivingBrain {
     }
 
     return removableIds.length;
+  }
+
+  purgeRadical050() {
+    const removableIds = [];
+    for (const [id, neuron] of this.neurons.entries()) {
+      const lowWeight = neuron.weight < 0.5;
+      const lowActivations = (neuron.activations || 0) < 15;
+      if (lowWeight || lowActivations) removableIds.push(id);
+    }
+
+    removableIds.forEach((id) => {
+      if (this.neurons.delete(id)) this.totalNeuronsDied += 1;
+    });
+
+    for (const neuron of this.neurons.values()) {
+      neuron.connections = neuron.connections.filter((conn) => this.neurons.has(this.normalizeConnection(conn).to));
+    }
+
+    this.pendingPatterns = [];
+    return { removed: removableIds.length, survivors: this.neurons.size };
   }
 
   async runBacktest(data = [], options = {}) {
@@ -1666,6 +1687,12 @@ function drawGraph(now) {
 
 function frame(ts) { if (!turboModeActive || turboPendingRender) { drawGraph(ts); turboPendingRender = false; } requestAnimationFrame(frame); }
 
+function reDraw() {
+  syncNodes();
+  turboPendingRender = true;
+  drawGraph(performance.now());
+}
+
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.floor(canvas.clientWidth * dpr);
@@ -1880,6 +1907,16 @@ document.getElementById('btnPruneNoise').onclick = () => {
   renderNeuronsList();
   renderStats();
   saveState('prune');
+};
+
+document.getElementById('btnRadicalPurge').onclick = async () => {
+  const summary = brain.purgeRadical050();
+  addLog(`🚨 Purga Radical 0.50 ejecutada. Eliminadas ${summary.removed} neuronas. Supervivientes: ${summary.survivors}. PendingPatterns reiniciado.`);
+  syncNodes();
+  renderNeuronsList();
+  renderStats();
+  reDraw();
+  await saveState('prune');
 };
 
 const handleExportPro = async () => {
